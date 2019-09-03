@@ -1,0 +1,6 @@
+.terraform*
+terraform.tfstate*
+.terranix*
+terranix-state.json
+ssh_key*
+git-crypt-key*
