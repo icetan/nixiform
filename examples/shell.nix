@@ -10,7 +10,9 @@ let
   inherit (pkgs.lib.strings) concatStringsSep;
 
   terranix = import ./.. { inherit pkgs; };
-  terraform = pkgs.terraform_0_11.withPlugins (p: with p; [ libvirt template digitalocean ]);
+  terraform = pkgs.terraform_0_11.withPlugins (p: with p; [
+    libvirt template digitalocean aws
+  ]);
 in
   pkgs.mkShell rec {
     name = "terranix-shell";

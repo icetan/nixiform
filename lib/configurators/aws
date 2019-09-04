@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+makeConfiguration() {
+  cat << EOF
+{ ... }: {
+  require = [
+    <nixpkgs/nixos/modules/virtualisation/amazon-image.nix>
+  ];
+  ec2.hvm = true;
+}
+EOF
+}
+
+makeConfiguration
