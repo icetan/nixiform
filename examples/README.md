@@ -32,10 +32,10 @@ terraform init
 terraform apply -auto-approve
 ```
 
-Initialize TerraNix config from Terraform state and push config to instances:
+Initialize TerraNix using Terraform state and push config to instances:
 
 ```sh
-terranix initFromTerraform
+terranix init
 ```
 
 ```sh

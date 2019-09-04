@@ -95,7 +95,7 @@ _initInstance() {
   mkdir -p .terranix
   cat > "$confPath" <<EOF
 { lib, ... }: let
-  state = lib.importJSON ../terranix-state.json;
+  state = import ./input-transform.nix { inherit lib; };
 in {
   imports = [
     (${physical_nix})
@@ -165,44 +165,49 @@ _pushInstance() {
   _infect "$ip" switch "$name" "$path"
 }
 
-# CLI commands
-
-terraformState() {
-  jq -rM '
-    [ .modules[].outputs
-    | select(.name!=null and .ip!=null and .authorized_keys!=null)
-    | { (.name.value): {
-        name:.name.value,
-        ip:.ip.value,
-        provider:.provider.value,
-        authorized_keys:.authorized_keys.value,
-        meta: (to_entries
-          | map(select(.key | test("^(name|ip|authorized_keys|provider)$") | not))
-          | map({ (.key): .value.value })
-          | add // {} )
-      } }
-    ] | add // {}
-    ' "${TERRAFORM_STATE:-./terraform.tfstate}"
-}
-
-initFromTerraform() {
-  terraformState > ./terranix-state.json
-  init
-}
-
-state() {
-  [ -f "./terranix-state.json" ] \
-    || { echo >&2 "Error: no state file found"; return 6; }
-  cat ./terranix-state.json
-}
-
-init() {
+_init() {
   local instances
 
   instances=$(_checkInstances) || return $?
   while read -r name; do
     _initInstance "$name"
   done <<<"$instances"
+}
+
+# CLI commands
+
+init() {
+  cat > .terranix/input-transform.nix <<EOF
+{ lib, ... }: with builtins; with lib; let
+  requiredKeys = [ "name" "ip" "authorized_keys" ];
+  nonMetaKeys = requiredKeys ++ [ "provider" ];
+  values = _: v: v.value;
+  isModule = m: all (k: elem k (attrNames m)) requiredKeys;
+  moduleMeta = filterAttrs (k: _: ! (elem k nonMetaKeys));
+  moduleNonMeta = filterAttrs (k: _: elem k nonMetaKeys);
+  module = m: mapAttrs values m.outputs;
+  tnmodule = m: (moduleNonMeta m) // { meta = moduleMeta m; };
+
+  tfstate = importJSON ../terraform.tfstate;
+  modules = map module tfstate.modules;
+  tnmodules = map tnmodule (filter isModule modules);
+in listToAttrs (map (m: { name = m.name; value = m; }) tnmodules)
+EOF
+  _init
+}
+
+initFromJSON() {
+  [ -f ./terranix-input.json ] || { echo >&2 "Error: couldn't find input JSON at $PWD/terranix-input.json"; return 6; }
+  cat > .terranix/input-transform.nix <<EOF
+{ lib, ... }: lib.importJSON ../terranix-input.json;
+EOF
+  _init
+}
+
+state() {
+  nix-instantiate --eval-only --strict --json \
+    -E 'with import <nixpkgs> {};import .terranix/input-transform.nix {inherit lib;}' \
+    || { echo >&2 "Error: input transform failed"; return 6; }
 }
 
 build() {

@@ -1,7 +1,7 @@
 let
   terranix = {
     stdenv, makeWrapper, lib, shellcheck,
-    glibcLocales, coreutils, jq, openssh, nix
+    glibcLocales, coreutils, jq, openssh, nix, git
   }: stdenv.mkDerivation rec {
     name = "terranix-${version}";
     version = "0.0.0";
@@ -14,7 +14,7 @@ let
     buildPhase = "true";
     installPhase = let
       path = lib.makeBinPath [
-        coreutils jq openssh nix
+        coreutils jq openssh nix git
       ];
       locales = lib.optionalString (glibcLocales != null)
         "--set LOCALE_ARCHIVE \"${glibcLocales}\"/lib/locale/locale-archive";
