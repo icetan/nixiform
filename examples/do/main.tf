@@ -5,8 +5,8 @@ provider "digitalocean" {
   token = "${var.do_token}"
 }
 
-module "do-1" {
+module "node-1" {
   source  = "./do_nixos"
-  name    = "do-1"
+  name    = "node-1"
   authorized_keys = [ "${file("${path.module}/../ssh_key.pub")}" ]
 }

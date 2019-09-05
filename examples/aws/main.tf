@@ -28,9 +28,9 @@ resource "aws_security_group" "default" {
   }
 }
 
-module "aws-1" {
+module "node-1" {
   source  = "./aws_nixos"
-  name    = "aws-1"
+  name    = "node-1"
   sg = "${aws_security_group.default.name}"
   authorized_keys = [ "${file("${path.module}/../ssh_key.pub")}" ]
 }

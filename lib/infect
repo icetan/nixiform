@@ -55,8 +55,7 @@ sourceNix() {
 }
 
 switch() {
-  local name;       name="$1"
-  local configPath; configPath="$2"
+  local configPath; configPath="$1"
 
   sourceNix
 
@@ -64,16 +63,7 @@ switch() {
 
   [ -f /etc/NIXOS ] || infect
 
-  /nix/var/nix/profiles/system/bin/switch-to-configuration switch || {
-    ecode="$?"
-    if [ "$ecode" == 100 ]; then
-      echo >&2 "Warning: Rebooting $name"
-      nohup sh -c 'sleep 2;reboot' >/dev/null 2>&1 &
-      exit 0
-    else
-      exit $ecode
-    fi
-  }
+  /nix/var/nix/profiles/system/bin/switch-to-configuration switch
 }
 
 [ -z "$*" ] || "${1#_}" "${@:2}"
