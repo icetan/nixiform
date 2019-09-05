@@ -1,1 +1,23 @@
-default
+#!/usr/bin/env bash
+set -eo pipefail
+
+# Taken from nixos-infect
+# More info at: https://github.com/elitak/nixos-infect
+
+makeConfiguration() {
+  local disk
+  for disk in vda sda; do [[ -e /dev/$disk ]] && break; done
+
+  cat << EOF
+{ ... }: {
+  require = [
+    <nixpkgs/nixos/modules/profiles/qemu-guest.nix>
+  ];
+  boot.loader.grub.device = "/dev/$disk";
+  fileSystems."/" = { device = "/dev/${disk}1"; fsType = "ext4"; };
+  boot.kernelParams = [ "console=ttyS0,19200" "earlyprint=serial,ttyS0,19200" ];
+}
+EOF
+}
+
+makeConfiguration

@@ -7,11 +7,10 @@
 
 let
   pkgs = (import nixpkgs {});
-  inherit (pkgs.lib.strings) concatStringsSep;
 
   terranix = import ./.. { inherit pkgs; };
   terraform = pkgs.terraform_0_11.withPlugins (p: with p; [
-    libvirt template digitalocean aws
+    libvirt template digitalocean aws hcloud
   ]);
 in
   pkgs.mkShell rec {

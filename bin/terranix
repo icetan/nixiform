@@ -177,6 +177,7 @@ _init() {
 # CLI commands
 
 init() {
+  mkdir -p .terranix
   cat > .terranix/input-transform.nix <<EOF
 { lib, ... }: with builtins; with lib; let
   requiredKeys = [ "name" "ip" "authorized_keys" ];
@@ -197,7 +198,9 @@ EOF
 }
 
 initFromJSON() {
-  [ -f ./terranix-input.json ] || { echo >&2 "Error: couldn't find input JSON at $PWD/terranix-input.json"; return 6; }
+  [ -f ./terranix-input.json ] \
+    || { echo >&2 "Error: couldn't find input JSON at $PWD/terranix-input.json"; return 6; }
+  mkdir -p .terranix
   cat > .terranix/input-transform.nix <<EOF
 { lib, ... }: lib.importJSON ../terranix-input.json;
 EOF
@@ -205,8 +208,10 @@ EOF
 }
 
 state() {
+  [ -f ./.terranix/input-transform.nix ] \
+    || { echo >&2 "Error: couldn't find input transform, try running: terranix init"; return 6; }
   nix-instantiate --eval-only --strict --json \
-    -E 'with import <nixpkgs> {};import .terranix/input-transform.nix {inherit lib;}' \
+    -E 'with import <nixpkgs> {};import ./.terranix/input-transform.nix {inherit lib;}' \
     || { echo >&2 "Error: input transform failed"; return 6; }
 }
 

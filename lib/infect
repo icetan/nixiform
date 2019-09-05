@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e -o pipefail
+set -eo pipefail
 
 # Taken from nixos-infect
 # More info at: https://github.com/elitak/nixos-infect
@@ -49,7 +49,6 @@ infect() {
 
 sourceNix() {
   [ -z "$NIX_PATH" ] || return 0
-  # shellcheck disable=SC1090
   [ -f ~/.nix-profile/etc/profile.d/nix.sh ] || installNix
   # shellcheck disable=SC1090
   source ~/.nix-profile/etc/profile.d/nix.sh
@@ -69,7 +68,7 @@ switch() {
     ecode="$?"
     if [ "$ecode" == 100 ]; then
       echo >&2 "Warning: Rebooting $name"
-      nohup sh -c 'sleep 1;reboot' >/dev/null 2>&1 &
+      nohup sh -c 'sleep 2;reboot' >/dev/null 2>&1 &
       exit 0
     else
       exit $ecode
@@ -77,4 +76,4 @@ switch() {
   }
 }
 
-[ -z "$*" ] || "$@"
+[ -z "$*" ] || "${1#_}" "${@:2}"

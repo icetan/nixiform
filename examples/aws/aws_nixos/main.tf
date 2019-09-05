@@ -11,7 +11,6 @@ resource "aws_key_pair" "terranix" {
 
 resource "aws_instance" "nixos" {
   ami = "ami-0022b8ea9efde5de4" #nixos
-  #ami = "ami-0cddf7994f6cbae36" # ubuntu 16.04
   instance_type = "t2.micro"
   key_name = "${aws_key_pair.terranix.key_name}"
   security_groups = ["${var.sg}"]

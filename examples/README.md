@@ -29,7 +29,7 @@ Init Terraform plugins and apply plan:
 
 ```sh
 terraform init
-terraform apply -auto-approve
+terraform apply
 ```
 
 Initialize TerraNix using Terraform state and push config to instances:
@@ -45,5 +45,5 @@ terranix push
 Check result by browsing to web server:
 
 ```sh
-xdg-open http://$(jq -r '."nixos-1".ip' < terranix-state.json)
+xdg-open http://$(terranix state | jq -r '."node-1".ip')
 ```

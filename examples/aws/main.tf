@@ -3,8 +3,8 @@ provider "aws" {
   region  = "eu-central-1"
 }
 
-resource "aws_security_group" "nixos" {
-  name = "allow-all-sg"
+resource "aws_security_group" "default" {
+  name = "allow-ssh-http-sg"
 
   ingress {
     cidr_blocks = [ "0.0.0.0/0" ]
@@ -31,6 +31,6 @@ resource "aws_security_group" "nixos" {
 module "aws-1" {
   source  = "./aws_nixos"
   name    = "aws-1"
-  sg = "${aws_security_group.nixos.name}"
+  sg = "${aws_security_group.default.name}"
   authorized_keys = [ "${file("${path.module}/../ssh_key.pub")}" ]
 }

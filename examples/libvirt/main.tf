@@ -2,14 +2,14 @@ provider "libvirt" {
   uri = "qemu:///system"
 }
 
-module "nixos-1" {
+module "node-1" {
   source  = "./libvirt_nixos"
-  name    = "nixos-1"
+  name    = "node-1"
   authorized_keys = [ "${file("${path.module}/../ssh_key.pub")}" ]
 }
 
-module "nixos-2" {
+module "node-2" {
   source  = "./libvirt_nixos"
-  name    = "nixos-2"
+  name    = "node-2"
   authorized_keys = [ "${file("${path.module}/../ssh_key.pub")}" ]
 }
