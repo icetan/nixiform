@@ -7,7 +7,7 @@ set -e -o pipefail
 # - 3  no configurator for provider
 # - 4  config build failed
 # - 5  not a valid config closure
-# - 6  no state file found
+# - 6  no input file found
 # - 7  no deploy file (terranix.nix) found
 # - 8  config push failed
 # - 9  couldn't reach instance
@@ -38,7 +38,7 @@ _configure() {
 
 _instance() {
   # shellcheck disable=SC2119
-  state | jq -r ".\"$1\" | .$2 // \"\""
+  input | jq -r ".\"$1\" | .$2 // \"\""
 }
 
 _configs() {
@@ -99,7 +99,7 @@ _initInstance() {
   _checkInstance "$name"
 
   provider=$(_instance "$name" provider)
-  _checkConfigurator "$provider"
+  _checkConfigurator "$provider" || return $?
 
   ip=$(_instance "$name" ip)
   confPath="./.terranix/configuration-$name.nix"
@@ -113,7 +113,7 @@ _initInstance() {
   mkdir -p .terranix
   cat > "$confPath" <<EOF
 { lib, ... }: let
-  state = import ./input-transform.nix { inherit lib; };
+  input = import ./input-transform.nix { inherit lib; };
 in {
   imports = [
     (${physical_nix})
@@ -153,7 +153,8 @@ _buildInstance() {
   echo >&2 "Building config..."
 
   # Build config
-  nix-build --no-out-link '<nixpkgs/nixos>' -A system \
+  # shellcheck disable=SC2086
+  nix-build $NIX_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
     --arg configuration "$confPath"
 }
 
@@ -172,8 +173,20 @@ _pushInstance() {
 
   echo >&2 "Pushing config..."
 
+  # XXX: move groupadd to lib/infect
   # Install Nix if not already installed
-  _infect "$ip" sourceNix
+  _infect "$ip" hasNix || {
+    cat <(cat <<EOF
+groupadd nixbld -g 30000 || true
+for i in {1..10}; do
+  useradd -c "Nix build user $i" \
+    -d /var/empty -g nixbld -G nixbld \
+    -M -N -r -s "$(command -v nologin)" nixbld$i \
+  || true
+done
+EOF
+    ) "$LIB_DIR"/install-nix-2.3 | _remote "$ip" sh
+  }
 
   # Push config closure to instance
   NIX_SSHOPTS="$TN_SSH_OPTS PATH=/root/.nix-profile/bin:\$PATH" \
@@ -199,8 +212,8 @@ _pushInstance() {
 _init() {
   local instances
 
-  instances=$(_checkInstances) || return $?
-  check
+  instances=$(_checkInstances "$@") || return $?
+  check "$@" || return $?
   while read -r name; do
     _initInstance "$name" \
       2> >(_ilog "$name")
@@ -227,7 +240,7 @@ init() {
   tnmodules = map tnmodule (filter isModule modules);
 in listToAttrs (map (m: { name = m.name; value = m; }) tnmodules)
 EOF
-  _init
+  _init "$@"
 }
 
 initFromJSON() {
@@ -237,11 +250,11 @@ initFromJSON() {
   cat > .terranix/input-transform.nix <<EOF
 { lib, ... }: lib.importJSON ../terranix-input.json;
 EOF
-  _init
+  _init "$@"
 }
 
 # shellcheck disable=SC2120
-state() {
+input() {
   [ -f ./.terranix/input-transform.nix ] \
     || { echo >&2 "Error: Couldn't find input transform, try running: terranix init"; return 6; }
   nix-instantiate --eval-only --strict --json \
@@ -284,12 +297,12 @@ push() {
   local buildOutput
 
   buildOutput=$(build "$@") || return $?
-  check "$@"
+  check "$@" || return $?
   while read -r name path; do
     _pushInstance "$name" "$path" \
       2> >(_ilog "$name")
   done <<<"$buildOutput"
-  check "$@"
+  check "$@" || return $?
 }
 
 trap 'trap - TERM; kill $$' TERM
