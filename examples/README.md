@@ -1,7 +1,10 @@
 # TerraNix examples
 
-Start by entering `nix-shell`, this will setup your environment and create SSH
-keys if necessary:
+In these examples we will use `nix-shell` to setup our local environment,
+including: creation of an SSH key and acquiring any dependencies.
+
+`cd` into the example directory you want to try and enter `nix-shell`. Specific
+instructions for any particular example should be echoed to the terminal.
 
 ## Trivial example with libvirt
 
@@ -29,11 +32,20 @@ terraform init
 terraform apply
 ```
 
-Initialize TerraNix using Terraform state and push config to instances:
+Initialize TerraNix using the Terraform state:
 
 ```sh
 terranix init
 ```
+
+Take a look at the inputs given to TerraNix from Terraform:
+
+```sh
+terranix input
+```
+
+Build and push the configuration in `terranix.nix` to the instances created by
+Terraform:
 
 ```sh
 terranix push

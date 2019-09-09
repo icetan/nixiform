@@ -6,4 +6,14 @@ in shell {
     template
     (pkgs.callPackage ./terraform-provider-libvirt.nix {})
   ]);
+  extraShellHook = ''
+    echo '
+    Install and start `libvirt` then make sure to create and start the default
+    `pool` and `net`:
+
+    $ virsh --connect "qemu:///system" pool-define-as default dir - - - - /var/lib/libvirt/images
+    $ virsh --connect "qemu:///system" pool-start default
+    $ virsh --connect "qemu:///system" net-start default
+    '
+  '';
 }

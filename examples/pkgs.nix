@@ -10,6 +10,7 @@ rec {
     { pkgs ? import nixpkgs {}
     , terranix ? import ./.. { inherit pkgs; }
     , terraform
+    , extraShellHook ? ""
     }: pkgs.mkShell rec {
       name = "terranix-shell";
 
@@ -27,6 +28,18 @@ rec {
         }
 
         addKey
+      '' + extraShellHook + ''
+        echo '
+        Provision infrastructure:
+
+        $ terraform init
+        $ terraform apply
+
+        Push configuration:
+
+        $ terranix init
+        $ terranix push
+        '
       '';
     };
 }
