@@ -1,16 +1,35 @@
 #!/usr/bin/env bash
 set -e -o pipefail
 
-# Exit codes
-# - 1  no instance with name
-# - 2  no config with name
-# - 3  no configurator for provider
-# - 4  config build failed
-# - 5  not a valid config closure
-# - 6  no input file found
-# - 7  no deploy file (terranix.nix) found
-# - 8  config push failed
-# - 9  couldn't reach instance
+# Exit codes:
+#   1  no instance with name
+#   2  no config with name
+#   3  no configurator for provider
+#   4  config build failed
+#   5  not a valid config closure
+#   6  no input file found
+#   7  no deploy file (terranix.nix) found
+#   8  config push failed
+#   9  couldn't reach instance
+#  10  no instance with name
+
+help() {
+  cat >&2 <<EOF
+Usage: terranix COMMAND [ARGS]
+
+Commands:
+
+  init NAMES..          Create input from Terraform state
+  initFromJSON NAMES..  Create input from ./terranix-input.json
+  input JSON_PATH       Print input data
+  check NAMES..         Check reach-ability of nodes
+  build NAMES..         Build configurations
+  push NAMES..          Push configurations to nodes
+  help                  This message
+EOF
+}
+
+_usage() { printf >&2 "Error: %s\n\n" "$*"; help; exit 10; }
 
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
@@ -120,9 +139,7 @@ in {
     (${physical_nix})
     (import ../terranix.nix input)."$name"
   ];
-  boot.cleanTmpDir = true;
   networking.hostName = "${name}";
-  networking.firewall.allowPing = true;
   services.openssh.enable = true;
   users.users.root.openssh.authorizedKeys.keys = [input.nodes."${name}".ssh_key];
   system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
@@ -299,4 +316,8 @@ push() {
 
 trap 'trap - TERM; kill $$' TERM
 
-[ -z "$*" ] || "${1#_}" "${@:2}" && echo >&2 "Done!"
+cmd=${1:-help}
+declare -F | cut -d' ' -f3 | grep -q "^${cmd#_}$" \
+  || _usage "No command: $cmd"
+
+"${cmd#_}" "${@:2}" && printf "\nDone!" >&2
