@@ -2,14 +2,14 @@ provider "libvirt" {
   uri = "qemu:///system"
 }
 
-module "node-1" {
-  source  = "./libvirt_nixos"
-  name    = "node-1"
-  authorized_keys = [ "${file("${path.module}/../ssh_key.pub")}" ]
+module "server" {
+  source          = "./libvirt_nixos"
+  name            = "server"
+  node_count      = 2
+  authorized_keys = [ file("${path.module}/../ssh_key.pub") ]
 }
 
-module "node-2" {
-  source  = "./libvirt_nixos"
-  name    = "node-2"
-  authorized_keys = [ "${file("${path.module}/../ssh_key.pub")}" ]
+output "terranix" {
+  value = module.server.terranix
 }
+

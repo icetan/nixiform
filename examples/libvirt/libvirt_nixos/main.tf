@@ -1,24 +1,26 @@
 variable "name" {}
+variable "node_count" {}
 variable "authorized_keys" {
-  type = "list"
+  type = list(string)
 }
 
 resource "libvirt_volume" "os_image_ubuntu" {
-  name   = "os_image-${var.name}"
+  name   = "os_image_${var.name}"
   pool   = "default"
   source = "https://cloud-images.ubuntu.com/releases/xenial/release/ubuntu-16.04-server-cloudimg-amd64-disk1.img"
 }
 
-resource "libvirt_volume" "disk_ubuntu_resized" {
-  name           = "disk-${var.name}"
-  base_volume_id = "${libvirt_volume.os_image_ubuntu.id}"
+resource "libvirt_volume" "disk_ubuntu" {
+  count          = var.node_count
+  name           = format("disk_%02d", count.index + 1)
+  base_volume_id = libvirt_volume.os_image_ubuntu.id
   pool           = "default"
   size           = 5361393664
 }
 
 # Use CloudInit to add our ssh-key to the instance
-resource "libvirt_cloudinit_disk" "cloudinit_ubuntu_resized" {
-  name = "cloudinit_image-${var.name}"
+resource "libvirt_cloudinit_disk" "cloudinit" {
+  name = "cloudinit_image"
   pool = "default"
 
   user_data = <<EOF
@@ -34,12 +36,12 @@ growpart:
 EOF
 }
 
-resource "libvirt_domain" "domain_ubuntu_resized" {
-  name   = "${var.name}"
-  memory = "512"
-  vcpu   = 1
-
-  cloudinit = "${libvirt_cloudinit_disk.cloudinit_ubuntu_resized.id}"
+resource "libvirt_domain" "ubuntu" {
+  count     = var.node_count
+  name      = format("server_%02d", count.index + 1)
+  memory    = "512"
+  vcpu      = 1
+  cloudinit = libvirt_cloudinit_disk.cloudinit.id
 
   network_interface {
     network_name   = "default"
@@ -62,7 +64,7 @@ resource "libvirt_domain" "domain_ubuntu_resized" {
   }
 
   disk {
-    volume_id = "${libvirt_volume.disk_ubuntu_resized.id}"
+    volume_id = libvirt_volume.disk_ubuntu[count.index].id
   }
 
   graphics {
@@ -72,18 +74,11 @@ resource "libvirt_domain" "domain_ubuntu_resized" {
   }
 }
 
-output "provider" {
-  value = "libvirt"
-}
-
-output "name" {
-  value = "${var.name}"
-}
-
-output "ip" {
-  value = "${libvirt_domain.domain_ubuntu_resized.network_interface.0.addresses.0}"
-}
-
-output "authorized_keys" {
-  value = ["${var.authorized_keys}"]
+output "terranix" {
+  value = [for domain in libvirt_domain.ubuntu : {
+    name = domain.name
+    ip = domain.network_interface.0.addresses.0
+    authorized_keys = var.authorized_keys
+    provider = "libvirt"
+  }]
 }

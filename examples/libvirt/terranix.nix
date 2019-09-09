@@ -1,1 +1,1 @@
-import ../network-2-nodes.nix
+import ../network-dynamic-nodes.nix
