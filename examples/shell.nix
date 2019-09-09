@@ -11,6 +11,7 @@ let
   terranix = import ./.. { inherit pkgs; };
   terraform = pkgs.terraform_0_11.withPlugins (p: with p; [
     libvirt template digitalocean aws hcloud
+    (pkgs.callPackage ./vultr/terraform-provider-vultr.nix {})
   ]);
 in
   pkgs.mkShell rec {
