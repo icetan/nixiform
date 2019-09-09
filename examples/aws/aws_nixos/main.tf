@@ -1,37 +1,28 @@
 variable "name" {}
-variable "authorized_keys" {
-  type = "list"
-}
+variable "ssh_key" {}
 variable "sg" {}
 
 resource "aws_key_pair" "terranix" {
-  key_name   = "terranix-key"
-  public_key = "${var.authorized_keys[0]}"
+  key_name   = "terranix"
+  public_key = var.ssh_key
 }
 
 resource "aws_instance" "nixos" {
   ami = "ami-0022b8ea9efde5de4" #nixos
   instance_type = "t2.micro"
-  key_name = "${aws_key_pair.terranix.key_name}"
-  security_groups = ["${var.sg}"]
+  key_name = aws_key_pair.terranix.key_name
+  security_groups = [var.sg]
 
   tags {
     Name = "terranix-${var.name}"
   }
 }
 
-output "provider" {
-  value = "aws"
-}
-
-output "name" {
-  value = "${var.name}"
-}
-
-output "ip" {
-  value = "${aws_instance.nixos.public_ip}"
-}
-
-output "authorized_keys" {
-  value = ["${var.authorized_keys[0]}"]
+output "terranix" {
+  value = {
+    name = var.name
+    ip = aws_instance.nixos.public_ip
+    ssh_key = var.ssh_key
+    provider = "aws"
+  }
 }

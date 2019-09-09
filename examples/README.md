@@ -3,10 +3,6 @@
 Start by entering `nix-shell`, this will setup your environment and create SSH
 keys if necessary:
 
-```sh
-nix-shell
-```
-
 ## Trivial example with libvirt
 
 ### Prerequisites
@@ -23,6 +19,7 @@ virsh --connect "qemu:///system" net-start default
 
 ```sh
 cd libvirt
+nix-shell
 ```
 
 Init Terraform plugins and apply plan:
@@ -45,5 +42,5 @@ terranix push
 Check result by browsing to web server:
 
 ```sh
-xdg-open http://$(terranix state | jq -r '."node-1".ip')
+xdg-open http://$(terranix input nodes.server_01.ip)
 ```

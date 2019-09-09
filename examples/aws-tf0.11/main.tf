@@ -31,10 +31,10 @@ resource "aws_security_group" "default" {
 module "server" {
   source  = "./aws_nixos"
   name    = "server"
-  ssh_key = file("${path.module}/../ssh_key.pub")
-  sg      = aws_security_group.default.name
+  ssh_key = "${file("${path.module}/../ssh_key.pub")}"
+  sg      = "${aws_security_group.default.name}"
 }
 
 output "terranix" {
-  value = module.server.terranix
+  value = "${module.server.terranix}"
 }

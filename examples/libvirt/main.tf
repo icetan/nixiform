@@ -3,10 +3,10 @@ provider "libvirt" {
 }
 
 module "server" {
-  source          = "./libvirt_nixos"
-  name            = "server"
-  node_count      = 2
-  authorized_keys = [ file("${path.module}/../ssh_key.pub") ]
+  source     = "./libvirt_nixos"
+  name       = "server"
+  node_count = 2
+  ssh_key    = file("${path.module}/../ssh_key.pub")
 }
 
 output "terranix" {

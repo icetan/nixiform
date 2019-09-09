@@ -1,8 +1,6 @@
 variable "name" {}
 variable "node_count" {}
-variable "authorized_keys" {
-  type = list(string)
-}
+variable "ssh_key" {}
 
 resource "libvirt_volume" "os_image_ubuntu" {
   name   = "os_image_${var.name}"
@@ -29,7 +27,7 @@ disable_root: 0
 ssh_pwauth: 1
 users:
   - name: root
-    ssh-authorized-keys: [ ${join(",", var.authorized_keys)} ]
+    ssh-authorized-keys: [ ${var.ssh_key} ]
 growpart:
   mode: auto
   devices: ['/']
@@ -38,7 +36,7 @@ EOF
 
 resource "libvirt_domain" "ubuntu" {
   count     = var.node_count
-  name      = format("server_%02d", count.index + 1)
+  name      = format("%s_%02d", var.name, count.index + 1)
   memory    = "512"
   vcpu      = 1
   cloudinit = libvirt_cloudinit_disk.cloudinit.id
@@ -78,7 +76,7 @@ output "terranix" {
   value = [for domain in libvirt_domain.ubuntu : {
     name = domain.name
     ip = domain.network_interface.0.addresses.0
-    authorized_keys = var.authorized_keys
+    ssh_key = var.ssh_key
     provider = "libvirt"
   }]
 }
