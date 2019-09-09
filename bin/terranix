@@ -38,7 +38,7 @@ _configure() {
 
 _instance() {
   # shellcheck disable=SC2119
-  input | jq -r ".\"$1\" | .$2 // \"\""
+  input | jq -r ".nodes.\"$1\" | .$2 // \"\""
 }
 
 _configs() {
@@ -124,7 +124,7 @@ in {
   networking.hostName = "${name}";
   networking.firewall.allowPing = true;
   services.openssh.enable = true;
-  users.users.root.openssh.authorizedKeys.keys = input."${name}".authorized_keys;
+  users.users.root.openssh.authorizedKeys.keys = input.nodes."${name}".authorized_keys;
   system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
 }
 EOF
@@ -213,18 +213,24 @@ init() {
   cat > .terranix/input-transform.nix <<EOF
 { lib, ... }: with builtins; with lib; let
   requiredKeys = [ "name" "ip" "authorized_keys" ];
-  nonMetaKeys = requiredKeys ++ [ "provider" ];
+  getRoot = s: (
+    if s?modules
+    then (findFirst
+      (m: (length m.path) == 1 && (elemAt m.path 0) == "root")
+      {outputs={};} s.modules)
+    else s
+  ).outputs;
   values = _: v: v.value;
-  isModule = m: all (k: elem k (attrNames m)) requiredKeys;
-  moduleMeta = filterAttrs (k: _: ! (elem k nonMetaKeys));
-  moduleNonMeta = filterAttrs (k: _: elem k nonMetaKeys);
-  module = m: mapAttrs values m.outputs;
-  tnmodule = m: (moduleNonMeta m) // { meta = moduleMeta m; };
+  isNode = m: all (k: elem k (attrNames m)) requiredKeys;
+  getNodes = m: flatten (optional (m?terranix) m.terranix);
 
   tfstate = importJSON ../terraform.tfstate;
-  modules = map module tfstate.modules;
-  tnmodules = map tnmodule (filter isModule modules);
-in listToAttrs (map (m: { name = m.name; value = m; }) tnmodules)
+  outputs = mapAttrs values (getRoot tfstate);
+  nodes = filter (isNode) (getNodes outputs);
+in {
+  meta = removeAttrs outputs ["terranix"];
+  nodes = listToAttrs (map (m: { name = m.name; value = m; }) nodes);
+}
 EOF
   _init "$@"
 }
