@@ -124,7 +124,7 @@ in {
   networking.hostName = "${name}";
   networking.firewall.allowPing = true;
   services.openssh.enable = true;
-  users.users.root.openssh.authorizedKeys.keys = input.nodes."${name}".authorized_keys;
+  users.users.root.openssh.authorizedKeys.keys = [input.nodes."${name}".ssh_key];
   system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
 }
 EOF
@@ -212,7 +212,7 @@ init() {
   mkdir -p .terranix
   cat > .terranix/input-transform.nix <<EOF
 { lib, ... }: with builtins; with lib; let
-  requiredKeys = [ "name" "ip" "authorized_keys" ];
+  requiredKeys = [ "name" "ip" "ssh_key" ];
   getRoot = s: (
     if s?modules
     then (findFirst
