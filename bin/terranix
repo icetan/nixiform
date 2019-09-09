@@ -44,7 +44,7 @@ _instance() {
 _configs() {
   [ -f "./terranix.nix" ] \
     || { echo >&2 "Error: No deploy file (terranix.nix) found"; return 7; }
-  nix-instantiate --eval-only --json -E 'builtins.attrNames (import ./terranix.nix)' \
+  nix-instantiate --eval-only --json -E 'with import <nixpkgs> {};builtins.attrNames (import ./terranix.nix (import ./.terranix/input-transform.nix {inherit lib;}))' \
     | jq -r '.[]'
 }
 
@@ -115,31 +115,17 @@ _initInstance() {
 { lib, ... }: let
   input = import ./input-transform.nix { inherit lib; };
 in {
-  imports = [
+  _module.args.input = input;
+  require = [
     (${physical_nix})
-    (import ../terranix.nix)."$name"
+    (import ../terranix.nix input)."$name"
   ];
-  options = with lib; with types; {
-    terranix = mkOption {
-      type = attrsOf (submodule { options = {
-        name = mkOption { type = str; };
-        ip = mkOption { type = str; };
-        provider  = mkOption { type = str; default = "default"; };
-        authorized_keys = mkOption { type = listOf str; default = []; };
-        meta = mkOption { type = attrs; default = {}; };
-      }; });
-      default = {};
-    };
-  };
-  config = {
-    terranix = state;
-    boot.cleanTmpDir = true;
-    networking.hostName = "${name}";
-    networking.firewall.allowPing = true;
-    services.openssh.enable = true;
-    users.users.root.openssh.authorizedKeys.keys = state."${name}".authorized_keys;
-    system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak";
-  };
+  boot.cleanTmpDir = true;
+  networking.hostName = "${name}";
+  networking.firewall.allowPing = true;
+  services.openssh.enable = true;
+  users.users.root.openssh.authorizedKeys.keys = input."${name}".authorized_keys;
+  system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
 }
 EOF
   echo "$name" "$confPath"
