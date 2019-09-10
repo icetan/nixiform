@@ -13,7 +13,7 @@ resource "hcloud_ssh_key" "default" {
 resource "hcloud_server" "ubuntu" {
   name = "server"
   server_type = "cx11"
-  image = "ubuntu-18.04"
+  image = "ubuntu-16.04"
   ssh_keys = [hcloud_ssh_key.default.id]
 }
 

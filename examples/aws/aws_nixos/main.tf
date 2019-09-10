@@ -12,8 +12,7 @@ resource "aws_instance" "nixos" {
   instance_type = "t2.micro"
   key_name = aws_key_pair.terranix.key_name
   security_groups = [var.sg]
-
-  tags {
+  tags = {
     Name = "terranix-${var.name}"
   }
 }
