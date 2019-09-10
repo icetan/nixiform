@@ -25,11 +25,13 @@ Commands:
   check NAMES..         Check reach-ability of nodes
   build NAMES..         Build configurations
   push NAMES..          Push configurations to nodes
+  version               Print TerraNix version
   help                  This message
 EOF
 }
 
 _usage() { printf >&2 "Error: %s\n\n" "$*"; help; exit 10; }
+version() { tr -d '\n' < "$LIB_DIR"/version; }
 
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"

@@ -4,7 +4,7 @@ let
     glibcLocales, coreutils, gzip, gnused, gnugrep, gnutar, jq, openssh, nix, git
   }: stdenv.mkDerivation rec {
     name = "terranix-${version}";
-    version = "0.0.0";
+    version = lib.fileContents ./lib/version;
     src = lib.sourceByRegex ./. [
       ".*bin.*"
       ".*lib.*"
