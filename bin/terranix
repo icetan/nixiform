@@ -133,15 +133,16 @@ _initInstance() {
   cat > "$confPath" <<EOF
 { lib, ... }: let
   input = import ./input-transform.nix { inherit lib; };
+  node = input.nodes."${name}";
 in {
-  _module.args.input = input;
+  _module.args = { inherit input node; };
   require = [
     (${physical_nix})
     (import ../terranix.nix input)."$name"
   ];
   networking.hostName = "${name}";
   services.openssh.enable = true;
-  users.users.root.openssh.authorizedKeys.keys = [input.nodes."${name}".ssh_key];
+  users.users.root.openssh.authorizedKeys.keys = [node.ssh_key];
   system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
 }
 EOF
@@ -180,6 +181,7 @@ _pushInstance() {
   # Install Nix if not already installed
   _infect "$ip" hasNix || {
     cat <(cat <<EOF
+mkdir -m 0755 /nix
 groupadd nixbld -g 30000 || true
 for i in {1..10}; do
   useradd -c "Nix build user $i" \
