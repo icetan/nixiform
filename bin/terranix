@@ -324,4 +324,4 @@ cmd=${1:-help}
 declare -F | cut -d' ' -f3 | grep -q "^${cmd#_}$" \
   || _usage "No command: $cmd"
 
-"${cmd#_}" "${@:2}" && printf "\nDone!" >&2
+"${cmd#_}" "${@:2}" && printf "\nDone!\n" >&2
