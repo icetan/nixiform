@@ -138,6 +138,7 @@ _initInstance() {
 }
 
 _buildInstance() {
+  local ecode=0
   local name="$1"
   local confPath="./.terranix/configuration-$name.nix";
   _checkInstance "$name"
@@ -165,8 +166,9 @@ EOF
   # shellcheck disable=SC2086
   nix-build $NIX_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
     --arg configuration "$confPath"
-
+  ecode=$?
   rm -f "$confPath"
+  return $ecode
 }
 
 _pushInstance() {
