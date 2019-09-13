@@ -22,7 +22,7 @@ let
       mkdir -p $out/{bin,lib}
       cp -r -t $out/bin ./bin/*
       cp -r -t $out/lib ./lib/*
-      wrapProgram "$out/bin/terranix" --argv0 terranix --set PATH "${path}" ${locales}
+      wrapProgram "$out/bin/terranix" --argv0 terranix --prefix PATH : "${path}" ${locales}
     '';
 
     doCheck = true;

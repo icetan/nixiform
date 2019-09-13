@@ -65,7 +65,10 @@ _instance() {
 _configs() {
   [ -f "./terranix.nix" ] \
     || { echo >&2 "Error: No deploy file (terranix.nix) found"; return 7; }
-  nix-instantiate --eval-only --json -E 'with import <nixpkgs> {};builtins.attrNames (import ./terranix.nix (import ./.terranix/input-transform.nix {inherit lib;}))' \
+  nix-instantiate --eval-only --json -E "
+    with import <nixpkgs> {};with builtins;
+    attrNames (import ./terranix.nix (fromJSON ''$(_inputHook)''))
+  " \
     | jq -r '.[]'
 }
 
@@ -113,8 +116,6 @@ _initInstance() {
   local name
   local ip
   local provider
-  local confPath
-  local physical_nix
 
   name="$1"
   _checkInstance "$name"
@@ -123,45 +124,49 @@ _initInstance() {
   _checkConfigurator "$provider" || return $?
 
   ip=$(_instance "$name" ip)
-  confPath="./.terranix/configuration-$name.nix"
+  physPath="./.terranix/physical-$name.nix"
 
   echo >&2 "Initializing config..."
 
-  # Get instance specific config
-  physical_nix=$(_configure "$provider" "$ip") || return $?
-
   # Aggrigate instance config with custom configs
   mkdir -p .terranix
+
+  # Get instance specific config
+  _configure "$provider" "$ip" > "$physPath" || return $?
+
+  echo "$name" "$physPath"
+}
+
+_buildInstance() {
+  local name="$1"
+  local confPath="./.terranix/configuration-$name.nix";
+  _checkInstance "$name"
+
+  echo >&2 "Building config..."
+
+  # Build config
   cat > "$confPath" <<EOF
-{ lib, ... }: let
-  input = import ./input-transform.nix { inherit lib; };
-  node = input.nodes."${name}";
+{ ... }: let
+  input = builtins.fromJSON ''$(_inputHook)'';
+  node = input.nodes."$name";
 in {
   _module.args = { inherit input node; };
   require = [
-    (${physical_nix})
+    (./physical-$name.nix)
     (import ../terranix.nix input)."$name"
   ];
-  networking.hostName = "${name}";
+  networking.hostName = "$name";
   services.openssh.enable = true;
   users.users.root.openssh.authorizedKeys.keys = [node.ssh_key];
   system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
 }
 EOF
-  echo "$name" "$confPath"
-}
 
-_buildInstance() {
-  local name="$1"
-  _checkInstance "$name"
-  local confPath="./.terranix/configuration-$name.nix"
-
-  echo >&2 "Building config..."
-
-  # Build config
   # shellcheck disable=SC2086
   nix-build $NIX_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
     --arg configuration "$confPath"
+
+  rm -f "$confPath"
 }
 
 _pushInstance() {
@@ -227,52 +232,37 @@ _init() {
   done <<<"$instances"
 }
 
+_inputHook() {
+  [[ -x ./.terranix/input-hook ]] \
+    || { echo >&2 "Error: Couldn't find an executable input hook, try running: terranix init"; return 6; }
+  ./.terranix/input-hook
+}
+
 # CLI commands
 
 init() {
   mkdir -p .terranix
-  cat > .terranix/input-transform.nix <<EOF
-{ lib, ... }: with builtins; with lib; let
-  requiredKeys = [ "name" "ip" "ssh_key" ];
-  getRoot = s: (
-    if s?modules
-    then (findFirst
-      (m: (length m.path) == 1 && (elemAt m.path 0) == "root")
-      {outputs={};} s.modules)
-    else s
-  ).outputs;
-  values = _: v: v.value;
-  isNode = m: all (k: elem k (attrNames m)) requiredKeys;
-  getNodes = m: flatten (optional (m?terranix) m.terranix);
-
-  tfstate = importJSON ../terraform.tfstate;
-  outputs = mapAttrs values (getRoot tfstate);
-  nodes = filter (isNode) (getNodes outputs);
-in {
-  meta = removeAttrs outputs ["terranix"];
-  nodes = listToAttrs (map (m: { name = m.name; value = m; }) nodes);
-}
-EOF
+  cp "$LIB_DIR"/input-hooks/default .terranix/input-hook
+  chmod u+w .terranix/input-hook
   _init "$@"
 }
 
+# TODO: clean up and move hook script to lib/input-hooks/
 initFromJSON() {
-  [ -f ./terranix-input.json ] \
+  [[ -f ./terranix-input.json ]] \
     || { echo >&2 "Error: Couldn't find input JSON at $PWD/terranix-input.json"; return 6; }
   mkdir -p .terranix
-  cat > .terranix/input-transform.nix <<EOF
-{ lib, ... }: lib.importJSON ../terranix-input.json;
+  cat > .terranix/input-hook <<EOF
+#!/usr/bin/env bash
+cat ./terranix-input.json
 EOF
+  chmod +x .terrnix/input-hook
   _init "$@"
 }
 
 # shellcheck disable=SC2120
 input() {
-  [ -f ./.terranix/input-transform.nix ] \
-    || { echo >&2 "Error: Couldn't find input transform, try running: terranix init"; return 6; }
-  nix-instantiate --eval-only --strict --json \
-    -E 'with import <nixpkgs> {};import ./.terranix/input-transform.nix {inherit lib;}' \
-    | jq -rM ".$1 // \"\"" \
+  _inputHook | jq -rM ".$1 // \"\"" \
     || { echo >&2 "Error: Input transform failed"; return 6; }
 }
 

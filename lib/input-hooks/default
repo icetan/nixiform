@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+terraform output -json | jq -rM '
+{
+  meta: (to_entries
+    | map(select(.key | test("^terranix$") | not))
+    | map({ (.key): .value.value })
+    | add // {}),
+  nodes: ([.terranix.value]
+    | flatten
+    | map(select(.name!=null and .ip!=null and .ssh_key!=null))
+    | map({ (.name): . })
+    | add // {})
+}
+'
