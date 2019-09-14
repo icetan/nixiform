@@ -12,6 +12,7 @@ set -e -o pipefail
 #   8  config push failed
 #   9  couldn't reach instance
 #  10  no instance with name
+#  11  couldn't copy closure to node
 
 help() {
   cat >&2 <<EOF
@@ -210,7 +211,8 @@ EOF
 
   # Push config closure to instance
   NIX_SSHOPTS="$TN_SSH_OPTS PATH=/root/.nix-profile/bin:\$PATH" \
-    nix-copy-closure --to root@"$ip" "$path"
+    nix-copy-closure -s --to root@"$ip" "$path" \
+    || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
 
   # Install config and infect instance with NixOS if not already
   _infect "$ip" switch "$path" || {
