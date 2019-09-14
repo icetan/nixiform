@@ -35,6 +35,8 @@ version() { tr -d '\n' < "$LIB_DIR"/version; }
 
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
+INPUT_CACHE_NIX="./.input-cache.json"
+INPUT_CACHE="./.terranix/.input-cache.json"
 TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.terranix/configurators:$LIB_DIR/configurators}"
 TN_SSH_OPTS="-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 
@@ -65,11 +67,10 @@ _instance() {
 _configs() {
   [ -f "./terranix.nix" ] \
     || { echo >&2 "Error: No deploy file (terranix.nix) found"; return 7; }
-  nix-instantiate --eval-only --json -E "
+  _inputHook && nix-instantiate --eval-only --json -E "
     with import <nixpkgs> {};with builtins;
-    attrNames (import ./terranix.nix (fromJSON ''$(_inputHook)''))
-  " \
-    | jq -r '.[]'
+    attrNames (import ./terranix.nix (lib.importJSON $INPUT_CACHE_NIX))
+  " | jq -r '.[]'
 }
 
 _checkInstance() {
@@ -116,6 +117,8 @@ _initInstance() {
   local name
   local ip
   local provider
+  local physicalNix
+  local confPath
 
   name="$1"
   _checkInstance "$name"
@@ -124,7 +127,6 @@ _initInstance() {
   _checkConfigurator "$provider" || return $?
 
   ip=$(_instance "$name" ip)
-  physPath="./.terranix/physical-$name.nix"
 
   echo >&2 "Initializing config..."
 
@@ -132,43 +134,47 @@ _initInstance() {
   mkdir -p .terranix
 
   # Get instance specific config
-  _configure "$provider" "$ip" > "$physPath" || return $?
+  confPath="./.terranix/configuration-$provider-$name.nix";
+  physicalNix=$(_configure "$provider" "$ip") || return $?
 
-  echo "$name" "$physPath"
-}
-
-_buildInstance() {
-  local ecode=0
-  local name="$1"
-  local confPath="./.terranix/configuration-$name.nix";
-  _checkInstance "$name"
-
-  echo >&2 "Building config..."
-
-  # Build config
-  cat > "$confPath" <<EOF
-{ ... }: let
-  input = builtins.fromJSON ''$(_inputHook)'';
+  _inputHook && cat > "$confPath" <<EOF
+{ lib, ... }: let
+  input = lib.importJSON $INPUT_CACHE_NIX;
   node = input.nodes."$name";
 in {
   _module.args = { inherit input node; };
   require = [
-    (./physical-$name.nix)
+    # Hardware config gernerated by configurator: $provider
+    ($physicalNix)
+    # Node specific config
     (import ../terranix.nix input)."$name"
   ];
   networking.hostName = "$name";
   services.openssh.enable = true;
   users.users.root.openssh.authorizedKeys.keys = [node.ssh_key];
-  system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
+  #system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
 }
 EOF
 
+  echo "$name" "$confPath"
+}
+
+_buildInstance() {
+  local ecode=0
+  local name="$1"
+  local confPath
+  local provider
+
+  _checkInstance "$name"
+  provider=$(_instance "$name" provider)
+  confPath="./.terranix/configuration-$provider-$name.nix";
+
+  echo >&2 "Building config..."
+
+  # Build config
   # shellcheck disable=SC2086
   nix-build $NIX_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
     --arg configuration "$confPath"
-  ecode=$?
-  rm -f "$confPath"
-  return $ecode
 }
 
 _pushInstance() {
@@ -235,9 +241,11 @@ _init() {
 }
 
 _inputHook() {
-  [[ -x ./.terranix/input-hook ]] \
-    || { echo >&2 "Error: Couldn't find an executable input hook, try running: terranix init"; return 6; }
-  ./.terranix/input-hook
+  [[ -f "$INPUT_CACHE" ]] || {
+    [[ -x ./.terranix/input-hook ]] \
+      || { echo >&2 "Error: Couldn't find an executable input hook, try running: terranix init"; return 6; }
+    ./.terranix/input-hook > "$INPUT_CACHE"
+  }
 }
 
 # CLI commands
@@ -264,7 +272,7 @@ EOF
 
 # shellcheck disable=SC2120
 input() {
-  _inputHook | jq -rM ".$1 // \"\"" \
+  { _inputHook && jq -rM ".$1 // \"\"" "$INPUT_CACHE"; } \
     || { echo >&2 "Error: Input transform failed"; return 6; }
 }
 
@@ -305,11 +313,12 @@ push() {
   check "$@" || return $?
   while read -r name path; do
     _pushInstance "$name" "$path" \
-      2> >(_ilog "$name")
+      2> >(_ilog "$name") || return $?
   done <<<"$buildOutput"
   check "$@" || return $?
 }
 
+trap 'trap - EXIT; rm -f "$INPUT_CACHE"' EXIT
 trap 'trap - TERM; kill $$' TERM
 
 cmd=${1:-help}
