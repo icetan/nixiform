@@ -28,6 +28,13 @@ Commands:
   push NAMES..          Push configurations to nodes
   version               Print TerraNix version
   help                  This message
+
+Environment variables:
+
+  TN_CONFIGURATOR_PATH  Where to look for provider configurators
+                        Default: ".terranix/configurators"
+  TN_NIX_BUILD_OPTS     Additional arguments to pass to \`nix-build\`
+                        Example: "--show-trace"
 EOF
 }
 
@@ -38,14 +45,15 @@ BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
 INPUT_CACHE_NIX="./.input-cache.json"
 INPUT_CACHE="./.terranix/.input-cache.json"
+SSH_OPTS="-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+
 TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.terranix/configurators:$LIB_DIR/configurators}"
-TN_SSH_OPTS="-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 
 _ilog() { sed "s|^|$1> |" >&2; }
 
 _remote() {
   # shellcheck disable=SC2086 disable=SC2029
-  ssh $TN_SSH_OPTS root@"$1" "${@:2}"
+  ssh $SSH_OPTS root@"$1" "${@:2}"
 }
 
 _configuratorPath() {
@@ -174,7 +182,7 @@ _buildInstance() {
 
   # Build config
   # shellcheck disable=SC2086
-  nix-build $NIX_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
+  nix-build $TN_NIX_BUILD_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
     --arg configuration "$confPath"
 }
 
@@ -210,7 +218,7 @@ EOF
   }
 
   # Push config closure to instance
-  NIX_SSHOPTS="$TN_SSH_OPTS PATH=/root/.nix-profile/bin:\$PATH" \
+  NIX_SSHOPTS="$SSH_OPTS PATH=/root/.nix-profile/bin:\$PATH" \
     nix-copy-closure -s --to root@"$ip" "$path" \
     || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
 
