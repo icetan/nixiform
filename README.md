@@ -98,7 +98,7 @@ output "terranix" {
   value = [for node in hcloud_server.ubuntu : {
     name = node.name
     ip = node.ipv4_address
-    ssh_key = var.ssh_key
+    ssh_key = local.ssh_key
     provider = "hcloud"
   }]
 }
