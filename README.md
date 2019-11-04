@@ -149,7 +149,7 @@ Terraform output, i.e. data about all the provisioned nodes in the network.
     };
   };
 
-  "server_02" = { config, input, node, ... }: {
+  "server_02" = { config, pkgs, input, node, ... }: {
     networking.firewall.allowedTCPPorts = [ 80 443 ];
     services.nginx = {
       enable = true;
@@ -158,6 +158,7 @@ Terraform output, i.e. data about all the provisioned nodes in the network.
           root = webpage "${node.ip}";
         };
       };
+      environment.systemPackages = [ pkgs.htop ];
     };
   };
 }
