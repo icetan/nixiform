@@ -8,13 +8,13 @@ rec {
 
   shell =
     { pkgs ? import nixpkgs {}
-    , terranix ? import ./.. { inherit pkgs; }
+    , nixiform ? import ./.. { inherit pkgs; }
     , terraform
     , extraShellHook ? ""
     }: pkgs.mkShell rec {
-      name = "terranix-shell";
+      name = "nixiform-shell";
 
-      buildInputs = with pkgs; [ git-crypt terraform terranix ];
+      buildInputs = with pkgs; [ git-crypt terraform nixiform ];
 
       SSH_KEY = toString ./ssh_key;
       NIX_PATH = "nixpkgs=${pkgs.path}";
@@ -37,8 +37,8 @@ rec {
 
         Push configuration:
 
-        $ terranix init
-        $ terranix push
+        $ nixiform init
+        $ nixiform push
         '
       '';
     };

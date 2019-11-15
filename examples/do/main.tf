@@ -14,7 +14,7 @@ locals {
 }
 
 resource "digitalocean_ssh_key" "default" {
-  name       = "TerraNix SSH key"
+  name       = "Nixiform SSH key"
   public_key = local.ssh_key
 }
 
@@ -27,7 +27,7 @@ resource "digitalocean_droplet" "ubuntu" {
   ssh_keys = [digitalocean_ssh_key.default.fingerprint]
 }
 
-output "terranix" {
+output "nixiform" {
   value = [for droplet in digitalocean_droplet.ubuntu : {
     name = droplet.name
     ip = droplet.ipv4_address

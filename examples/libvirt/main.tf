@@ -9,7 +9,7 @@ module "server" {
   ssh_key    = file("${path.module}/../ssh_key.pub")
 }
 
-output "terranix" {
-  value = module.server.terranix
+output "nixiform" {
+  value = module.server.nixiform
 }
 

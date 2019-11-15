@@ -1,9 +1,9 @@
 let
-  terranix = {
+  nixiform = {
     stdenv, makeWrapper, lib, shellcheck,
     glibcLocales, coreutils, gzip, gnused, gnugrep, gnutar, jq, openssh, nix, git
   }: stdenv.mkDerivation rec {
-    name = "terranix-${version}";
+    name = "nixiform-${version}";
     version = lib.fileContents ./lib/version;
     src = lib.sourceByRegex ./. [
       ".*bin.*"
@@ -22,7 +22,7 @@ let
       mkdir -p $out/{bin,lib}
       cp -r -t $out/bin ./bin/*
       cp -r -t $out/lib ./lib/*
-      wrapProgram "$out/bin/terranix" --argv0 terranix --prefix PATH : "${path}" ${locales}
+      wrapProgram "$out/bin/nixiform" --argv0 nixiform --prefix PATH : "${path}" ${locales}
     '';
 
     doCheck = true;
@@ -31,10 +31,10 @@ let
     '';
 
     meta = with lib; {
-      description = "TerraNix deploy NixOS configurations";
-      homepage = https://github.com/icetan/terranix;
+      description = "Nixiform deploy NixOS configurations";
+      homepage = https://github.com/icetan/nixiform;
       license = licenses.gpl3;
       inherit version;
     };
   };
-in { pkgs ? import <nixpkgs> {} }: pkgs.callPackage terranix {}
+in { pkgs ? import <nixpkgs> {} }: pkgs.callPackage nixiform {}

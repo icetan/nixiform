@@ -72,7 +72,7 @@ resource "libvirt_domain" "ubuntu" {
   }
 }
 
-output "terranix" {
+output "nixiform" {
   value = [for domain in libvirt_domain.ubuntu : {
     name = domain.name
     ip = domain.network_interface.0.addresses.0

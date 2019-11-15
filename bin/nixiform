@@ -8,7 +8,7 @@ set -e -o pipefail
 #   4  config build failed
 #   5  not a valid config closure
 #   6  no input file found
-#   7  no deploy file (terranix.nix) found
+#   7  no deploy file (nixiform.nix) found
 #   8  config push failed
 #   9  couldn't reach instance
 #  10  no instance with name
@@ -16,23 +16,23 @@ set -e -o pipefail
 
 help() {
   cat >&2 <<EOF
-Usage: terranix COMMAND [ARGS]
+Usage: nixiform COMMAND [ARGS]
 
 Commands:
 
   init NAMES..          Create input from Terraform state
-  initFromJSON NAMES..  Create input from ./terranix-input.json
+  initFromJSON NAMES..  Create input from ./nixiform-input.json
   input JSON_PATH       Print input data
   check NAMES..         Check reach-ability of nodes
   build NAMES..         Build configurations
   push NAMES..          Push configurations to nodes
-  version               Print TerraNix version
+  version               Print Nixiform version
   help                  This message
 
 Environment variables:
 
   TN_CONFIGURATOR_PATH  Where to look for provider configurators
-                        Default: ".terranix/configurators"
+                        Default: ".nixiform/configurators"
   TN_NIX_BUILD_OPTS     Additional arguments to pass to \`nix-build\`
                         Example: "--show-trace"
 EOF
@@ -44,10 +44,10 @@ version() { tr -d '\n' < "$LIB_DIR"/version; }
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
 INPUT_CACHE_NIX="./.input-cache.json"
-INPUT_CACHE="./.terranix/.input-cache.json"
+INPUT_CACHE="./.nixiform/.input-cache.json"
 SSH_OPTS="-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
 
-TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.terranix/configurators:$LIB_DIR/configurators}"
+TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
 
 _ilog() { sed "s|^|$1> |" >&2; }
 
@@ -74,11 +74,11 @@ _instance() {
 }
 
 _configs() {
-  [ -f "./terranix.nix" ] \
-    || { echo >&2 "Error: No deploy file (terranix.nix) found"; return 7; }
+  [ -f "./nixiform.nix" ] \
+    || { echo >&2 "Error: No deploy file (nixiform.nix) found"; return 7; }
   _inputHook && nix-instantiate --eval-only --json -E "
     with import <nixpkgs> {};with builtins;
-    attrNames (import ./terranix.nix (lib.importJSON $INPUT_CACHE_NIX))
+    attrNames (import ./nixiform.nix (lib.importJSON $INPUT_CACHE_NIX))
   " | jq -r '.[]'
 }
 
@@ -140,10 +140,10 @@ _initInstance() {
   echo >&2 "Initializing config..."
 
   # Aggrigate instance config with custom configs
-  mkdir -p .terranix
+  mkdir -p .nixiform
 
   # Get instance specific config
-  confPath="./.terranix/configuration-$provider-$name.nix";
+  confPath="./.nixiform/configuration-$provider-$name.nix";
   physicalNix=$(_configure "$provider" "$ip") || return $?
 
   _inputHook && cat > "$confPath" <<EOF
@@ -156,7 +156,7 @@ in {
     # Hardware config gernerated by configurator: $provider
     ($physicalNix)
     # Node specific config
-    (import ../terranix.nix input)."$name"
+    (import ../nixiform.nix input)."$name"
   ];
   networking.hostName = "$name";
   services.openssh.enable = true;
@@ -176,7 +176,7 @@ _buildInstance() {
 
   _checkInstance "$name"
   provider=$(_instance "$name" provider)
-  confPath="./.terranix/configuration-$provider-$name.nix";
+  confPath="./.nixiform/configuration-$provider-$name.nix";
 
   echo >&2 "Building config..."
 
@@ -252,31 +252,31 @@ _init() {
 
 _inputHook() {
   [[ -f "$INPUT_CACHE" ]] || {
-    [[ -x ./.terranix/input-hook ]] \
-      || { echo >&2 "Error: Couldn't find an executable input hook, try running: terranix init"; return 6; }
-    ./.terranix/input-hook > "$INPUT_CACHE"
+    [[ -x ./.nixiform/input-hook ]] \
+      || { echo >&2 "Error: Couldn't find an executable input hook, try running: nixiform init"; return 6; }
+    ./.nixiform/input-hook > "$INPUT_CACHE"
   }
 }
 
 # CLI commands
 
 init() {
-  mkdir -p .terranix
-  cp "$LIB_DIR"/input-hooks/default .terranix/input-hook
-  chmod u+w .terranix/input-hook
+  mkdir -p .nixiform
+  cp "$LIB_DIR"/input-hooks/default .nixiform/input-hook
+  chmod u+w .nixiform/input-hook
   _init "$@"
 }
 
 # TODO: clean up and move hook script to lib/input-hooks/
 initFromJSON() {
-  [[ -f ./terranix-input.json ]] \
-    || { echo >&2 "Error: Couldn't find input JSON at $PWD/terranix-input.json"; return 6; }
-  mkdir -p .terranix
-  cat > .terranix/input-hook <<EOF
+  [[ -f ./nixiform-input.json ]] \
+    || { echo >&2 "Error: Couldn't find input JSON at $PWD/nixiform-input.json"; return 6; }
+  mkdir -p .nixiform
+  cat > .nixiform/input-hook <<EOF
 #!/usr/bin/env bash
-cat ./terranix-input.json
+cat ./nixiform-input.json
 EOF
-  chmod +x .terrnix/input-hook
+  chmod +x .nixiform/input-hook
   _init "$@"
 }
 

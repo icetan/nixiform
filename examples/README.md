@@ -1,4 +1,4 @@
-# TerraNix examples
+# Nixiform examples
 
 In these examples we will use `nix-shell` to setup our local environment,
 including: creation of an SSH key and acquiring any dependencies.
@@ -32,27 +32,27 @@ terraform init
 terraform apply
 ```
 
-Initialize TerraNix using the Terraform state:
+Initialize Nixiform using the Terraform state:
 
 ```sh
-terranix init
+nixiform init
 ```
 
-Take a look at the inputs given to TerraNix from Terraform:
+Take a look at the inputs given to Nixiform from Terraform:
 
 ```sh
-terranix input
+nixiform input
 ```
 
-Build and push the configuration in `terranix.nix` to the instances created by
+Build and push the configuration in `nixiform.nix` to the instances created by
 Terraform:
 
 ```sh
-terranix push
+nixiform push
 ```
 
 Check result by browsing to web server:
 
 ```sh
-xdg-open http://$(terranix input nodes.server_01.ip)
+xdg-open http://$(nixiform input nodes.server_01.ip)
 ```

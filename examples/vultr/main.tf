@@ -15,7 +15,7 @@ locals {
 }
 
 resource "vultr_ssh_key" "default" {
-  name     = "Terranix SSH key"
+  name     = "Nixiform SSH key"
   ssh_key  = local.ssh_key
 }
 
@@ -30,7 +30,7 @@ resource "vultr_server" "ubuntu" {
   os_id = "215" # Ubuntu 16.04 x64
 }
 
-output "terranix" {
+output "nixiform" {
   value = [for server in vultr_server.ubuntu : {
     name = server.label
     ip = server.main_ip

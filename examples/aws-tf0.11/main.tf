@@ -35,6 +35,6 @@ module "server" {
   sg      = "${aws_security_group.default.name}"
 }
 
-output "terranix" {
-  value = "${module.server.terranix}"
+output "nixiform" {
+  value = "${module.server.nixiform}"
 }

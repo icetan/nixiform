@@ -6,7 +6,7 @@ locals {
 }
 
 resource "hcloud_ssh_key" "default" {
-  name       = "TerraNix SSH key"
+  name       = "Nixiform SSH key"
   public_key = local.ssh_key
 }
 
@@ -17,7 +17,7 @@ resource "hcloud_server" "ubuntu" {
   ssh_keys = [hcloud_ssh_key.default.id]
 }
 
-output "terranix" {
+output "nixiform" {
   value = {
     name = hcloud_server.ubuntu.name
     ip = hcloud_server.ubuntu.ipv4_address

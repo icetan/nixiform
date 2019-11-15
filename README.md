@@ -1,11 +1,11 @@
-# TerraNix
+# Nixiform
 
 Provision infrastructure with Terraform and manage configuration with NixOS.
 
 ## Installation
 
 ```
-nix-env -i -f https://github.com/icetan/terranix/tarball/master
+nix-env -i -f https://github.com/icetan/nixiform/tarball/master
 ```
 
 ## Motivation
@@ -28,17 +28,17 @@ support of the Terraform community.
 This leaves implementing a bridge between Terraform and managing NixOS
 configurations.
 
-This is mostly what TerraNix does. It takes the output from Terraform (or any
+This is mostly what Nixiform does. It takes the output from Terraform (or any
 other source really) and installs NixOS on the nodes provisioned if needed and
-then pushes each corresponding NixOS config defined in a `terranix.nix` file.
+then pushes each corresponding NixOS config defined in a `nixiform.nix` file.
 
 ## Examples
 
 First we need to declare our infrastructure on which we will push our
 configuration to.
 
-We do this using Terraform, although TerraNix despite it's name is agnostic to
-who provisions the infrastructure. The only requirement is that TerraNix gets
+We do this using Terraform, although Nixiform despite it's name is agnostic to
+who provisions the infrastructure. The only requirement is that Nixiform gets
 information about how to connect to the nodes it will push to.
 
 **main.tf**
@@ -48,9 +48,9 @@ provider "hcloud" {
 }
 ```
 
-First off we need a SSH key pair for TerraNix to use when pushing it's config.
+First off we need a SSH key pair for Nixiform to use when pushing it's config.
 
-TerraNix does not manage SSH keys for you so you will need to generate and add
+Nixiform does not manage SSH keys for you so you will need to generate and add
 it to your SSH agent manually before pushing.
 
 ```terraform
@@ -59,14 +59,14 @@ locals {
 }
 
 resource "hcloud_ssh_key" "default" {
-  name       = "TerraNix SSH key"
+  name       = "Nixiform SSH key"
   public_key = local.ssh_key
 }
 ```
 
 Provision two Hetzner Cloud nodes with Ubuntu, because most providers don't
 support NixOS we select Ubuntu which can be replaced with NixOS automatically
-by TerraNix on first config push.
+by Nixiform on first config push.
 
 ```terraform
 resource "hcloud_server" "ubuntu" {
@@ -78,23 +78,23 @@ resource "hcloud_server" "ubuntu" {
 }
 ```
 
-In order for TerraNix to know how to connect to the nodes provisioned by
+In order for Nixiform to know how to connect to the nodes provisioned by
 Terraform we have to give it some input.
 
-By setting the output property `terranix` in the Terraform config, TerraNix
+By setting the output property `nixiform` in the Terraform config, Nixiform
 will be able pick up the relevant data.
 
-The value of `terranix` can be a single node or a list of nodes with the keys
+The value of `nixiform` can be a single node or a list of nodes with the keys
 `name`, `ip`, `ssh_key`, `provider`.
 
-- `name`: the node identifier to map against a NixOS config in `terranix.nix`
+- `name`: the node identifier to map against a NixOS config in `nixiform.nix`
 - `ip`: a node IP which can be connected to via SSH
 - `ssh_key`: the public SSH key for which will be allowed access
 - `provider` (optional): determines which configurator will be used to
   generate a NixOS hardware config
 
 ```terraform
-output "terranix" {
+output "nixiform" {
   value = [for node in hcloud_server.ubuntu : {
     name = node.name
     ip = node.ipv4_address
@@ -104,7 +104,7 @@ output "terranix" {
 }
 ```
 
-**terranix.nix**
+**nixiform.nix**
 
 This is the file which maps which NixOS configuration will be pushed to which
 provisioned node. Analogous to NixOps' network file.
@@ -123,17 +123,17 @@ in input: {
 ```
 
 Define a node, the attribute name corresponds to the value of
-`terranix.*.name` in the terraform output.
+`nixiform.*.name` in the terraform output.
 
 The value is the nodes NixOS configuration, same as a NixOS module or what
 you would have in your `configuration.nix`. Additional arguments passed is
 `input` and `node`.
 
 Where `node` is data about the specific node from the Terraform output, in
-this case the value of `terranix.*` where `terranix.*.name` is equal to
+this case the value of `nixiform.*` where `nixiform.*.name` is equal to
 `"server"`.
 
-And `input` is the value of the entire `terranix` property from the
+And `input` is the value of the entire `nixiform` property from the
 Terraform output, i.e. data about all the provisioned nodes in the network.
 
 ```nix
@@ -174,12 +174,12 @@ terraform init
 terraform apply
 ```
 
-Then we will tell TerraNix to take any Terraform output from the current
+Then we will tell Nixiform to take any Terraform output from the current
 directory and connect to each node to get information about the hardware which
 we will need in order to build the NixOS config.
 
 ```sh
-terranix init
+nixiform init
 ```
 
 Building the configs, this step is optional as it will be done automatically
@@ -187,7 +187,7 @@ before each `push` but it can be helpful to check that the configuration is
 correct.
 
 ```sh
-terranix build
+nixiform build
 ```
 
 Finally we push each nodes configuration and if the node doesn't have NixOS yet
@@ -198,7 +198,7 @@ choice.)
 **Warning**: Any previously installed OS will be wiped.
 
 ```sh
-terranix push
+nixiform push
 ```
 
 More examples in the [examples](./examples) directory.
