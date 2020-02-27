@@ -33,16 +33,20 @@ hasNix() {
 }
 
 switch() {
-  local configPath; configPath="$1"
+  local op; op="$1"
+  local configPath; configPath="$2"
 
   # shellcheck disable=SC1090
   [ -n "$NIX_PATH" ] || source "$HOME"/.nix-profile/etc/profile.d/nix.sh
 
   nix-env --set "$configPath" -p /nix/var/nix/profiles/system
 
-  [ -f /etc/NIXOS ] || infect
+  [ -f /etc/NIXOS ] || {
+    [ "$op" = "switch" ] || exit 200
+    infect
+  }
 
-  /nix/var/nix/profiles/system/bin/switch-to-configuration switch
+  /nix/var/nix/profiles/system/bin/switch-to-configuration "$op"
 }
 
 [ -z "$*" ] || "${1#_}" "${@:2}"

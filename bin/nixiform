@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e -o pipefail
+set -eo pipefail
 
 # Exit codes:
 #   1  no instance with name
@@ -13,6 +13,7 @@ set -e -o pipefail
 #   9  couldn't reach instance
 #  10  no instance with name
 #  11  couldn't copy closure to node
+#  12  not infecting when dry push
 
 help() {
   cat >&2 <<EOF
@@ -25,7 +26,7 @@ Commands:
   input JSON_PATH       Print input data
   check NAMES..         Check reach-ability of nodes
   build NAMES..         Build configurations
-  push NAMES..          Push configurations to nodes
+  push  NAMES.. [--dry] Push configurations to nodes
   version               Print Nixiform version
   help                  This message
 
@@ -78,7 +79,7 @@ _configs() {
     || { echo >&2 "Error: No deploy file (nixiform.nix) found"; return 7; }
   _inputHook && nix-instantiate --eval-only --json -E "
     with import <nixpkgs> {};with builtins;
-    attrNames (import ./nixiform.nix (lib.importJSON $INPUT_CACHE_NIX))
+    attrNames (import ./nixiform.nix (lib.importJSON $INPUT_CACHE))
   " | jq -r '.[]'
 }
 
@@ -187,6 +188,7 @@ _buildInstance() {
 }
 
 _pushInstance() {
+  local op; op="switch"
   local name
   local ip
   local provider
@@ -199,11 +201,21 @@ _pushInstance() {
   path="$2"
   [ -e "$path" ] || { echo >&2 "Error: Not a valid config closure: $path"; return 5; }
 
+  shift 2
+  while [ -n "$1" ]; do case "$1" in
+    --dry) op="dry-activate";;
+    *) echo >&2 "Not a recognized push option '$1'";;
+  esac; shift; done
+
   echo >&2 "Pushing config..."
 
   # XXX: move groupadd to lib/infect
   # Install Nix if not already installed
   _infect "$ip" hasNix || {
+    [ "$op" = "switch" ] || {
+      echo >&2 "Pushing with --dry, won't infect"
+      exit 12
+    }
     cat <(cat <<EOF
 mkdir -m 0755 /nix
 groupadd nixbld -g 30000 || true
@@ -223,8 +235,12 @@ EOF
     || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
 
   # Install config and infect instance with NixOS if not already
-  _infect "$ip" switch "$path" || {
+  _infect "$ip" switch "$op" "$path" || {
     case "$?" in
+      200)
+        echo >&2 "Pushing with --dry, won't infect"
+        exit 12
+        ;;
       100)
         echo >&2 "Rebooting..."
         _remote "$ip" reboot || true
@@ -318,14 +334,21 @@ push() {
   local name
   local path
   local buildOutput
+  local names
+  local flags
 
-  buildOutput=$(build "$@") || return $?
-  check "$@" || return $?
+  while [ -n "$1" ]; do case "$1" in
+    --*) flags+=("$1");;
+    *) names+=("$1");;
+  esac; shift; done
+
+  buildOutput=$(build "${names[@]}") || return $?
+  check "${names[@]}" || return $?
   while read -r name path; do
-    _pushInstance "$name" "$path" \
+    _pushInstance "$name" "$path" "${flags[@]}" \
       2> >(_ilog "$name") || return $?
   done <<<"$buildOutput"
-  check "$@" || return $?
+  check "${names[@]}" || return $?
 }
 
 trap 'trap - EXIT; rm -f "$INPUT_CACHE"' EXIT

@@ -6,8 +6,8 @@ let
     name = "nixiform-${version}";
     version = lib.fileContents ./lib/version;
     src = lib.sourceByRegex ./. [
-      ".*bin.*"
-      ".*lib.*"
+      "bin" "bin/.*"
+      "lib" "lib/.*"
     ];
 
     nativeBuildInputs = [ makeWrapper shellcheck ];

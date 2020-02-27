@@ -3,7 +3,7 @@ let
 in input: builtins.mapAttrs (name: node:
   { config, input, ... }: {
     require = [ (common.http-server ''
-      hej hej I'm ${name} (ip = ${node.ip})
+      Nej nej 6: hej I'm ${name} (ip = ${node.ip})
       ${common.info input.nodes}
     '') ];
   }) input.nodes

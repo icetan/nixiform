@@ -18,7 +18,7 @@ resource "libvirt_volume" "disk_ubuntu" {
 
 # Use CloudInit to add our ssh-key to the instance
 resource "libvirt_cloudinit_disk" "cloudinit" {
-  name = "cloudinit_image"
+  name = "cloudinit_image_${var.name}"
   pool = "default"
 
   user_data = <<EOF

@@ -20,6 +20,7 @@ rec {
       NIX_PATH = "nixpkgs=${pkgs.path}";
 
       shellHook = ''
+        export NIX_PATH="${NIX_PATH}"
         addKey() {
           test -f "$SSH_KEY" \
             || ssh-keygen -f "$SSH_KEY" -q -N ""
