@@ -14,6 +14,17 @@ set -eo pipefail
 #  10  no instance with name
 #  11  couldn't copy closure to node
 #  12  not infecting when dry push
+#  13  invalid option
+
+BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
+LIB_DIR="${BIN_DIR%/*}/lib"
+INPUT_CACHE_NIX="./.input-cache.json"
+INPUT_CACHE="./.nixiform/.input-cache.json"
+SSH_OPTS="-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+
+TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
+
+version() { tr -d '\n' < "$LIB_DIR"/version; }
 
 help() {
   cat >&2 <<EOF
@@ -27,7 +38,6 @@ Commands:
   check NAMES..         Check reach-ability of nodes
   build NAMES..         Build configurations
   push  NAMES.. [--dry] Push configurations to nodes
-  version               Print Nixiform version
   help                  This message
 
 Environment variables:
@@ -36,19 +46,12 @@ Environment variables:
                         Default: ".nixiform/configurators"
   TN_NIX_BUILD_OPTS     Additional arguments to pass to \`nix-build\`
                         Example: "--show-trace"
+
+Version: $(version)
 EOF
 }
 
 _usage() { printf >&2 "Error: %s\n\n" "$*"; help; exit 10; }
-version() { tr -d '\n' < "$LIB_DIR"/version; }
-
-BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
-LIB_DIR="${BIN_DIR%/*}/lib"
-INPUT_CACHE_NIX="./.input-cache.json"
-INPUT_CACHE="./.nixiform/.input-cache.json"
-SSH_OPTS="-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
-
-TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
 
 _ilog() { sed "s|^|$1> |" >&2; }
 
@@ -194,20 +197,22 @@ _pushInstance() {
   local provider
   local path
 
-  name="$1"
+  while [ -n "$1" ]; do case "$1" in
+    --dry) op="dry-activate";;
+    --*) echo >&2 "Not a recognized push option '$1'"; return 13;;
+    *)
+      if [ -z "$name" ]; then name="$1"
+      elif [ -z "$path" ]; then path="$1"
+      fi
+      ;;
+  esac; shift; done
+
   _checkInstance "$name"
   ip=$(_instance "$name" ip)
 
-  path="$2"
   [ -e "$path" ] || { echo >&2 "Error: Not a valid config closure: $path"; return 5; }
 
-  shift 2
-  while [ -n "$1" ]; do case "$1" in
-    --dry) op="dry-activate";;
-    *) echo >&2 "Not a recognized push option '$1'";;
-  esac; shift; done
-
-  echo >&2 "Pushing config..."
+  echo >&2 "Pushing config ($op)..."
 
   # XXX: move groupadd to lib/infect
   # Install Nix if not already installed
@@ -279,7 +284,7 @@ _inputHook() {
 init() {
   mkdir -p .nixiform
   cp "$LIB_DIR"/input-hooks/default .nixiform/input-hook
-  chmod u+w .nixiform/input-hook
+  chmod u+wx .nixiform/input-hook
   _init "$@"
 }
 
@@ -331,6 +336,27 @@ build() {
 }
 
 push() {
+  local name
+  local path
+  local buildOutput
+  local names
+  local flags
+
+  while [ -n "$1" ]; do case "$1" in
+    --*) flags+=("$1");;
+    *) names+=("$1");;
+  esac; shift; done
+
+  buildOutput=$(build "${names[@]}") || return $?
+  check "${names[@]}" || return $?
+  while read -r name path; do
+    _pushInstance "$name" "$path" "${flags[@]}" \
+      2> >(_ilog "$name") || return $?
+  done <<<"$buildOutput"
+  check "${names[@]}" || return $?
+}
+
+diff() {
   local name
   local path
   local buildOutput
