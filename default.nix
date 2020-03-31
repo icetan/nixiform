@@ -1,7 +1,8 @@
 let
   nixiform = {
     stdenv, makeWrapper, lib, shellcheck,
-    glibcLocales, coreutils, gzip, gnused, gnugrep, gnutar, jq, openssh, nix, git
+    glibcLocales, coreutils, gzip, gnused, gnugrep, gnutar, openssh, git, jq,
+    nix, nix-diff
   }: stdenv.mkDerivation rec {
     name = "nixiform-${version}";
     version = lib.fileContents ./lib/version;
@@ -14,7 +15,8 @@ let
     buildPhase = "true";
     installPhase = let
       path = lib.makeBinPath [
-        coreutils gzip gnused gnugrep gnutar jq openssh nix git
+        coreutils gzip gnused gnugrep gnutar openssh git jq
+        nix nix-diff
       ];
       locales = lib.optionalString (glibcLocales != null)
         "--set LOCALE_ARCHIVE \"${glibcLocales}\"/lib/locale/locale-archive";

@@ -20,7 +20,7 @@ BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
 INPUT_CACHE_NIX="./.input-cache.json"
 INPUT_CACHE="./.nixiform/.input-cache.json"
-SSH_OPTS="-o LogLevel=ERROR -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+SSH_OPTS=(-o "LogLevel=ERROR" -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" "${TN_SSH_OPTS[@]}")
 
 TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
 
@@ -38,6 +38,7 @@ Commands:
   check NAMES..         Check reach-ability of nodes
   build NAMES..         Build configurations
   push  NAMES.. [--dry] Push configurations to nodes
+  diff  NAMES..         Show diff of local and remote configuraiton
   help                  This message
 
 Environment variables:
@@ -46,6 +47,8 @@ Environment variables:
                         Default: ".nixiform/configurators"
   TN_NIX_BUILD_OPTS     Additional arguments to pass to \`nix-build\`
                         Example: "--show-trace"
+  TN_SSH_OPTS           Additional aguments to pass to \`ssh\`
+                        Example: "-i ~/.ssh/id_rsa"
 
 Version: $(version)
 EOF
@@ -57,7 +60,7 @@ _ilog() { sed "s|^|$1> |" >&2; }
 
 _remote() {
   # shellcheck disable=SC2086 disable=SC2029
-  ssh $SSH_OPTS root@"$1" "${@:2}"
+  ssh "${SSH_OPTS[@]}" root@"$1" "${@:2}"
 }
 
 _configuratorPath() {
@@ -235,7 +238,7 @@ EOF
   }
 
   # Push config closure to instance
-  NIX_SSHOPTS="$SSH_OPTS PATH=/root/.nix-profile/bin:\$PATH" \
+  NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
     nix-copy-closure -s --to root@"$ip" "$path" \
     || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
 
@@ -361,20 +364,21 @@ diff() {
   local path
   local buildOutput
   local names
-  local flags
+  local ip
 
   while [ -n "$1" ]; do case "$1" in
-    --*) flags+=("$1");;
+    --*) echo >&2 "Not a recognized diff option: $1"; return 13;;
     *) names+=("$1");;
   esac; shift; done
 
   buildOutput=$(build "${names[@]}") || return $?
-  check "${names[@]}" || return $?
   while read -r name path; do
-    _pushInstance "$name" "$path" "${flags[@]}" \
+    ip=$(_instance "$name" ip)
+    nix-diff \
+      "$(_remote "$ip" nix-store -qd /nix/var/nix/profiles/system)" \
+      "$(nix-store -qd "$path")" \
       2> >(_ilog "$name") || return $?
   done <<<"$buildOutput"
-  check "${names[@]}" || return $?
 }
 
 trap 'trap - EXIT; rm -f "$INPUT_CACHE"' EXIT
