@@ -20,9 +20,9 @@ BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
 INPUT_CACHE_NIX="./.input-cache.json"
 INPUT_CACHE="./.nixiform/.input-cache.json"
-SSH_OPTS=(-o "LogLevel=ERROR" -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" "${TN_SSH_OPTS[@]}")
+SSH_OPTS=(-o "LogLevel=ERROR" -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" "${NF_SSH_OPTS[@]}")
 
-TN_CONFIGURATOR_PATH="${TN_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
+NF_CONFIGURATOR_PATH="${NF_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
 
 version() { tr -d '\n' < "$LIB_DIR"/version; }
 
@@ -43,11 +43,11 @@ Commands:
 
 Environment variables:
 
-  TN_CONFIGURATOR_PATH  Where to look for provider configurators
+  NF_CONFIGURATOR_PATH  Where to look for provider configurators
                         Default: ".nixiform/configurators"
-  TN_NIX_BUILD_OPTS     Additional arguments to pass to \`nix-build\`
+  NF_NIX_BUILD_OPTS     Additional arguments to pass to \`nix-build\`
                         Example: "--show-trace"
-  TN_SSH_OPTS           Additional aguments to pass to \`ssh\`
+  NF_SSH_OPTS           Additional aguments to pass to \`ssh\`
                         Example: "-i ~/.ssh/id_rsa"
 
 Version: $(version)
@@ -64,7 +64,7 @@ _remote() {
 }
 
 _configuratorPath() {
-  PATH="$TN_CONFIGURATOR_PATH" command -v "${1:-default}"
+  PATH="$NF_CONFIGURATOR_PATH" command -v "${1:-default}"
 }
 
 _infect() {
@@ -189,7 +189,7 @@ _buildInstance() {
 
   # Build config
   # shellcheck disable=SC2086
-  nix-build $TN_NIX_BUILD_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
+  nix-build $NF_NIX_BUILD_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
     --arg configuration "$confPath"
 }
 
