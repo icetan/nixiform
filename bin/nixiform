@@ -239,7 +239,7 @@ EOF
 
   # Push config closure to instance
   NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
-    nix-copy-closure -s --to root@"$ip" "$path" \
+    nix-copy-closure -s --to root@"$ip" "$path" 2>/dev/null \
     || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
 
   # Install config and infect instance with NixOS if not already
