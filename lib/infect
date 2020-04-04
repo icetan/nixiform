@@ -20,8 +20,12 @@ infect() {
   echo etc/resolv.conf            >> /etc/NIXOS_LUSTRATE
   echo root/.nix-defexpr/channels >> /etc/NIXOS_LUSTRATE
 
-  rm -rf /boot.bak
-  mv -v /boot /boot.bak
+  if mount | grep -q "on /boot "; then
+    cp -vr /boot /boot.bak
+    umount /boot
+  else
+    mv -v /boot /boot.bak
+  fi
 
   /nix/var/nix/profiles/system/bin/switch-to-configuration boot
 }
