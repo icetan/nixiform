@@ -5,16 +5,18 @@ set -eo pipefail
 # More info at: https://github.com/elitak/nixos-infect
 
 makeConfiguration() {
-  local disk
-  for disk in vda sda; do [[ -e /dev/$disk ]] && break; done
+  local grubdev
+  for grubdev in /dev/vda /dev/sda; do [[ -e $grubdev ]] && break; done
+
+  rootfsdev=$(mount | grep "on / type" | awk '{print $1;}')
 
   cat << EOF
 { ... }: {
   require = [
     <nixpkgs/nixos/modules/profiles/qemu-guest.nix>
   ];
-  boot.loader.grub.device = "/dev/$disk";
-  fileSystems."/" = { device = "/dev/${disk}1"; fsType = "ext4"; };
+  boot.loader.grub.device = "$grubdev";
+  fileSystems."/" = { device = "$rootfsdev"; fsType = "ext4"; };
 }
 EOF
 }
