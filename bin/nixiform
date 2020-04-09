@@ -40,7 +40,7 @@ Commands:
   build NAMES..           Build configurations
   push  OPTIONS NAMES..   Push configurations to nodes
     -d|--dry              Upload closure but do not switch to configuration
-    -r|--auto-reboot      Reboot instance if needed (default is to ref
+    -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
   diff  NAMES..           Show diff of local and remote configuration
   help                    This message
 
