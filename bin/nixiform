@@ -250,7 +250,7 @@ EOF
   _infect "$ip" switch "$op" "$path" || {
     case "$?" in
       200)
-        echo >&2 "Refusing to infect instance with NixOS becuase option --dry was given"
+        echo >&2 "Refusing to infect instance with NixOS because option --dry was given"
         exit 12
         ;;
       100)
