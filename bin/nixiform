@@ -36,7 +36,7 @@ Commands:
   init NAMES..            Create input from Terraform state
   initFromJSON NAMES..    Create input from ./nixiform-input.json
   input JSON_PATH         Print input data
-  check NAMES..           Check reach-ability of nodes
+  check NAMES..           Check reachability of nodes
   build NAMES..           Build configurations
   push  OPTIONS NAMES..   Push configurations to nodes
     -d|--dry              Upload closure but do not switch to configuration
