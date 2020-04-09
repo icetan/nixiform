@@ -225,7 +225,7 @@ _pushInstance() {
   # Install Nix if not already installed
   _infect "$ip" hasNix || {
     [[ "$op" = "switch" ]] || {
-      echo >&2 "Refusing to infect instance with NixOS becuase option --dry was given"
+      echo >&2 "Refusing to infect instance with NixOS because option --dry was given"
       exit 12
     }
     cat <(cat <<EOF
