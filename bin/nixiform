@@ -13,8 +13,9 @@ set -eo pipefail
 #   9  couldn't reach instance
 #  10  no instance with name
 #  11  couldn't copy closure to node
-#  12  not infecting when dry push
+#  12  refuse to infect when dry push
 #  13  invalid option
+#  100 instance needs reboot to complete
 
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
@@ -32,23 +33,25 @@ Usage: nixiform COMMAND [ARGS]
 
 Commands:
 
-  init NAMES..          Create input from Terraform state
-  initFromJSON NAMES..  Create input from ./nixiform-input.json
-  input JSON_PATH       Print input data
-  check NAMES..         Check reach-ability of nodes
-  build NAMES..         Build configurations
-  push  NAMES.. [--dry] Push configurations to nodes
-  diff  NAMES..         Show diff of local and remote configuraiton
-  help                  This message
+  init NAMES..            Create input from Terraform state
+  initFromJSON NAMES..    Create input from ./nixiform-input.json
+  input JSON_PATH         Print input data
+  check NAMES..           Check reachability of nodes
+  build NAMES..           Build configurations
+  push  OPTIONS NAMES..   Push configurations to nodes
+    -d|--dry              Upload closure but do not switch to configuration
+    -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
+  diff  NAMES..           Show diff of local and remote configuration
+  help                    This message
 
 Environment variables:
 
-  NF_CONFIGURATOR_PATH  Where to look for provider configurators
-                        Default: ".nixiform/configurators"
-  NF_NIX_BUILD_OPTS     Additional arguments to pass to \`nix-build\`
-                        Example: "--show-trace"
-  NF_SSH_OPTS           Additional aguments to pass to \`ssh\`
-                        Example: "-i ~/.ssh/id_rsa"
+  NF_CONFIGURATOR_PATH    Where to look for provider configurators
+                          Default: ".nixiform/configurators"
+  NF_NIX_BUILD_OPTS       Additional arguments to pass to \`nix-build\`
+                          Example: "--show-trace"
+  NF_SSH_OPTS             Additional aguments to pass to \`ssh\`
+                          Example: "-i ~/.ssh/id_rsa"
 
 Version: $(version)
 EOF
@@ -200,9 +203,10 @@ _pushInstance() {
   local provider
   local path
 
-  while [ -n "$1" ]; do case "$1" in
-    --dry) op="dry-activate";;
-    --*) echo >&2 "Not a recognized push option '$1'"; return 13;;
+  while [[ -n "$1" ]]; do case "$1" in
+    -d|--dry) op="dry-activate";;
+    -r|--auto-reboot) forceReboot=1;;
+    -*) echo >&2 "Not a recognized push option '$1'"; return 13;;
     *)
       if [ -z "$name" ]; then name="$1"
       elif [ -z "$path" ]; then path="$1"
@@ -213,15 +217,15 @@ _pushInstance() {
   _checkInstance "$name"
   ip=$(_instance "$name" ip)
 
-  [ -e "$path" ] || { echo >&2 "Error: Not a valid config closure: $path"; return 5; }
+  [[ -e "$path" ]] || { echo >&2 "Error: Not a valid config closure: $path"; return 5; }
 
   echo >&2 "Pushing config ($op)..."
 
   # XXX: move groupadd to lib/infect
   # Install Nix if not already installed
   _infect "$ip" hasNix || {
-    [ "$op" = "switch" ] || {
-      echo >&2 "Pushing with --dry, won't infect"
+    [[ "$op" = "switch" ]] || {
+      echo >&2 "Refusing to infect instance with NixOS because option --dry was given"
       exit 12
     }
     cat <(cat <<EOF
@@ -246,12 +250,18 @@ EOF
   _infect "$ip" switch "$op" "$path" || {
     case "$?" in
       200)
-        echo >&2 "Pushing with --dry, won't infect"
+        echo >&2 "Refusing to infect instance with NixOS because option --dry was given"
         exit 12
         ;;
       100)
-        echo >&2 "Rebooting..."
-        _remote "$ip" reboot || true
+        echo >&2 "Instance needs to reboot to finish configuration"
+        if [[ -n "$forceReboot" ]]; then
+          echo >&2 "Rebooting..."
+          _remote "$ip" reboot || true
+        else
+          echo >&2 "Refusing to reboot, use option --auto-reboot or reboot instance manually"
+          exit 100
+        fi
         ;;
       4)
         echo >&2 "Warning: Couldn't start all services"
@@ -345,8 +355,8 @@ push() {
   local names
   local flags
 
-  while [ -n "$1" ]; do case "$1" in
-    --*) flags+=("$1");;
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
     *) names+=("$1");;
   esac; shift; done
 
@@ -366,8 +376,8 @@ diff() {
   local names
   local ip
 
-  while [ -n "$1" ]; do case "$1" in
-    --*) echo >&2 "Not a recognized diff option: $1"; return 13;;
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) echo >&2 "Not a recognized diff option: $1"; return 13;;
     *) names+=("$1");;
   esac; shift; done
 
