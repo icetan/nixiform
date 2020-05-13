@@ -315,11 +315,11 @@ check() {
   local ecode; ecode=0
 
   instances=$(_checkInstances "$@") || return $?
-  while read -r name; do
+  for name in $instances; do
     _checkUp "$name" \
       2> >(_ilog "$name") \
       || { ecode=9; continue; }
-  done <<<"$instances"
+  done
   [ "$ecode" == 0 ] || echo >&2 "Error: Couldn't reach all instance"
   return $ecode
 }
