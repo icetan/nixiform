@@ -104,9 +104,9 @@ _checkInstances() {
     then names=("$@")
     else names_=$(_configs) || return $?; mapfile -t names < <(echo "$names_")
   fi
-  for i in "${!names[@]}"; do
-    _checkInstance "${names[i]}" || return $?
-    echo "${names[i]}"
+  for name in "${names[@]}"; do
+    _checkInstance "${name}" || return $?
+    echo "${name}"
   done
 }
 
