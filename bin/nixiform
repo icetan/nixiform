@@ -107,9 +107,9 @@ _checkInstances() {
     then names=("$@")
     else names_=$(_configs) || return $?; mapfile -t names < <(echo "$names_")
   fi
-  for i in "${!names[@]}"; do
-    _checkInstance "${names[i]}" || return $?
-    echo "${names[i]}"
+  for name in "${names[@]}"; do
+    _checkInstance "${name}" || return $?
+    echo "${name}"
   done
 }
 
@@ -325,11 +325,11 @@ check() {
   local ecode; ecode=0
 
   instances=$(_checkInstances "$@") || return $?
-  while read -r name; do
+  for name in $instances; do
     _checkUp "$name" \
       2> >(_ilog "$name") \
       || { ecode=9; continue; }
-  done <<<"$instances"
+  done
   [ "$ecode" == 0 ] || echo >&2 "Error: Couldn't reach all instance"
   return $ecode
 }
