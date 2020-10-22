@@ -92,6 +92,39 @@ _configs() {
   " | jq -r '.[]'
 }
 
+_secrets() {
+  local name="$1"
+  local confPath
+  local provider
+
+  _checkInstance "$name"
+  provider=$(_instance "$name" provider)
+  confPath="./.nixiform/configuration-$provider-$name.nix";
+
+  nix-instantiate --eval-only --strict --json -E "
+    with import <nixpkgs/nixos> { configuration = $confPath;}; with builtins;
+    if config?localSecrets
+    then map (k: let ls = config.localSecrets.\"\${k}\"; in
+        [ ls.path config.secrets.\"\${k}\" ]
+      ) (attrNames config.localSecrets)
+    else []
+  "
+}
+
+_pushSecrets() {
+  local name="$1"
+  local ip
+  local file
+
+  ip=$(_instance "$name" ip)
+  file=$(_secrets "$name" | jq -c '.[]') || return $?
+  while read -r line && [ -n "$line" ]; do
+    mapfile -t l < <(jq -r '.[]' <<<"$line")
+    find "${l[0]}" | sed >&2 's/^/Uploading /'
+    scp >&2 -rB "${SSH_OPTS[@]}" "${l[0]}" root@"$ip":"${l[1]}"
+  done <<<"$file"
+}
+
 _checkInstance() {
   local name
 
@@ -157,14 +190,59 @@ _initInstance() {
   physicalNix=$(_configure "$provider" "$ip") || return $?
 
   _inputHook && cat > "$confPath" <<EOF
-{ lib, ... }: let
+{ lib, ... }: with builtins; let
   input = lib.importJSON $INPUT_CACHE_NIX;
   node = input.nodes."$name";
+  hashDir = dir:
+    mapAttrs (k: v: let p = "\${dir}/\${k}"; in
+      if v == "regular" then hashFile "sha1" p
+      else if v == "directory" then hashDir p
+      else "")
+    (readDir dir);
+  hash = path: let p = toString path; in
+    if (readDir (dirOf p))."\${baseNameOf p}" == "directory"
+    then hashString "sha1" (toJSON (hashDir p))
+    else hashFile "sha1" p;
 in {
   _module.args = { inherit input node; };
   require = [
+    # Secrets module
+    ({ lib, config, ... }: with lib; {
+      options.secrets = mkOption {
+        description = "Attrset of paths to secrets, name -> server path.";
+        type = with types; attrsOf str;
+      };
+      options.localSecrets = mkOption {
+        description = "Attrset of paths to local secrets, name -> local path.";
+        type = with types; attrsOf (submodule { options = {
+          path = mkOption { type = path; };
+          chmod = mkOption { type = strMatching "[0-7]+"; default = "0600"; };
+          user = mkOption { type = enum (attrNames config.users.users); default = "root"; };
+          group = mkOption { type = enum (attrNames config.users.groups); default = "root"; };
+        };});
+        default = {};
+      };
+      config.secrets = mapAttrs (k: v: "/run/nf-keys/"+(hash v.path)) config.localSecrets;
+      config.system.activationScripts.nf-keys-permissons = ''
+        mkdir -p /run/nf-keys
+        chmod 755 /run/nf-keys
+        find /run/nf-keys -mindepth 1 -maxdepth 1 \\
+          \${concatMapStrings (p: " ! -path '\${p}' ") (attrValues config.secrets)} \\
+          -exec rm -rf {} \;
+      ''
+      + concatMapStrings (k: let
+        ls = config.localSecrets."\${k}";
+        s = config.secrets."\${k}";
+      in ''
+        chmod -R "\${ls.chmod}" "\${s}"
+        find "\${s}" -type d -exec chmod ug+x {} \;
+        chown -R "\${ls.user}:\${ls.group}" "\${s}"
+      '') (attrNames config.secrets);
+    })
+
     # Hardware config gernerated by configurator: $provider
     ($physicalNix)
+
     # Node specific config
     (import ../nixiform.nix input)."$name"
   ];
@@ -363,6 +441,8 @@ push() {
   buildOutput=$(build "${names[@]}") || return $?
   check "${names[@]}" || return $?
   while read -r name path; do
+    _pushSecrets "$name" \
+      2> >(_ilog "$name")
     _pushInstance "$name" "$path" "${flags[@]}" \
       2> >(_ilog "$name") || return $?
   done <<<"$buildOutput"
@@ -389,6 +469,17 @@ diff() {
       "$(nix-store -qd "$path")" \
       2> >(_ilog "$name") || return $?
   done <<<"$buildOutput"
+}
+
+secret() {
+  local instances
+  local name
+
+  instances=$(_checkInstances "$@") || return $?
+  while read -r name; do
+    _pushSecrets "$name" \
+      2> >(_ilog "$name")
+  done <<<"$instances"
 }
 
 trap 'trap - EXIT; rm -f "$INPUT_CACHE"' EXIT
