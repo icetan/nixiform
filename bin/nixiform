@@ -103,10 +103,10 @@ _secrets() {
 
   nix-instantiate --eval-only --strict --json -E "
     with import <nixpkgs/nixos> { configuration = $confPath;}; with builtins;
-    if config?localSecrets
-    then map (k: let ls = config.localSecrets.\"\${k}\"; in
-        [ ls.path config.secrets.\"\${k}\" ]
-      ) (attrNames config.localSecrets)
+    if (config?nixiform && config.nixiform?filesIn)
+    then map (k: let i = config.nixiform.filesIn.\"\${k}\"; in
+        [ i.path config.nixiform.filesOut.\"\${k}\" ]
+      ) (attrNames config.nixiform.filesIn)
     else []
   "
 }
@@ -208,12 +208,8 @@ in {
   require = [
     # Secrets module
     ({ lib, config, ... }: with lib; {
-      options.secrets = mkOption {
-        description = "Attrset of paths to secrets, name -> server path.";
-        type = with types; attrsOf str;
-      };
-      options.localSecrets = mkOption {
-        description = "Attrset of paths to local secrets, name -> local path.";
+      options.nixiform.filesIn = mkOption {
+        description = "Attrset of paths to local files, name -> local path.";
         type = with types; attrsOf (submodule { options = {
           path = mkOption { type = path; };
           chmod = mkOption { type = strMatching "[0-7]+"; default = "0600"; };
@@ -222,22 +218,27 @@ in {
         };});
         default = {};
       };
-      config.secrets = mapAttrs (k: v: "/run/nf-keys/"+(hash v.path)) config.localSecrets;
+      options.nixiform.filesOut = mkOption {
+        description = "Attrset of paths to remote files, name -> server path.";
+        type = with types; attrsOf str;
+        default = {};
+      };
+      config.nixiform.filesOut = mapAttrs (k: v: "/run/nf-keys/"+(hash v.path)) config.nixiform.filesIn;
       config.system.activationScripts.nf-keys-permissons = ''
         mkdir -p /run/nf-keys
         chmod 755 /run/nf-keys
         find /run/nf-keys -mindepth 1 -maxdepth 1 \\
-          \${concatMapStrings (p: " ! -path '\${p}' ") (attrValues config.secrets)} \\
+          \${concatMapStrings (p: " ! -path '\${p}' ") (attrValues config.nixiform.filesOut)} \\
           -exec rm -rf {} \;
       ''
       + concatMapStrings (k: let
-        ls = config.localSecrets."\${k}";
-        s = config.secrets."\${k}";
+        i = config.nixiform.filesIn."\${k}";
+        o = config.nixiform.filesOut."\${k}";
       in ''
-        chmod -R "\${ls.chmod}" "\${s}"
-        find "\${s}" -type d -exec chmod ug+x {} \;
-        chown -R "\${ls.user}:\${ls.group}" "\${s}"
-      '') (attrNames config.secrets);
+        chmod -R "\${i.chmod}" "\${o}"
+        find "\${o}" -type d -exec chmod ug+x {} \;
+        chown -R "\${i.user}:\${i.group}" "\${o}"
+      '') (attrNames config.nixiform.filesIn);
     })
 
     # Hardware config gernerated by configurator: $provider
