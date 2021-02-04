@@ -15,6 +15,7 @@ set -eo pipefail
 #  11  couldn't copy closure to node
 #  12  refuse to infect when dry push
 #  13  invalid option
+#  14  couldn't copy derivation closure to node
 #  100 instance needs reboot to complete
 
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
@@ -118,6 +119,9 @@ _pushSecrets() {
 
   ip=$(_instance "$name" ip)
   file=$(_secrets "$name" | jq -c '.[]') || return $?
+  if [[ -n $file ]]; then
+    _remote "$ip" "mkdir -p /run/nf-keys"
+  fi
   while read -r line && [ -n "$line" ]; do
     mapfile -t l < <(jq -r '.[]' <<<"$line")
     find "${l[0]}" | sed >&2 's/^/Uploading /'
@@ -269,10 +273,11 @@ _buildInstance() {
 
   echo >&2 "Building config..."
 
-  # Build config
+  # Build config derivation
   # shellcheck disable=SC2086
-  nix-build $NF_NIX_BUILD_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
-    --arg configuration "$confPath"
+  nix-instantiate $NF_NIX_BUILD_OPTS '<nixpkgs/nixos>' -A system --arg configuration "$confPath"
+  #nix-build $NF_NIX_BUILD_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
+  #  --arg configuration "$confPath"
 }
 
 _pushInstance() {
@@ -320,10 +325,21 @@ EOF
     ) "$LIB_DIR"/install-nix-2.3 | _remote "$ip" sh
   }
 
-  # Push config closure to instance
-  NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
-    nix-copy-closure -s --to root@"$ip" "$path" \
-    || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
+  # shellcheck disable=SC2154
+  if [[ -z $buildRemote ]]; then
+    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+      nix-copy-closure -s --to root@"$ip" "$path" \
+      || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
+    path=$(_remote "$ip" nix-store -r "$path") \
+      || { echo >&2 "Error: Failed to realize derivation on node: $path"; return 14; }
+  else
+    # Push config closure to instance
+    path=$(nix-store -r "$path")
+    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+      nix-copy-closure -s --to root@"$ip" "$path" \
+      || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
+  fi
+
 
   # Install config and infect instance with NixOS if not already
   _infect "$ip" switch "$op" "$path" || {
