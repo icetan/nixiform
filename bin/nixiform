@@ -121,7 +121,7 @@ _pushSecrets() {
   ip=$(_instance "$name" ip)
   file=$(_secrets "$name" | jq -c '.[]') || return $?
   if [[ -n $file ]]; then
-    _remote "$ip" "mkdir -p /run/nf-keys"
+    _remote "$ip" "mkdir -p /run/nf-keys" </dev/null
   fi
   while read -r line && [ -n "$line" ]; do
     mapfile -t l < <(jq -r '.[]' <<<"$line")
@@ -163,7 +163,8 @@ _checkUp() {
   ip=$(_instance "$1" ip)
   echo >&2 "Checking SSH connection..."
   for i in $(seq 3); do
-    _remote "$ip" true && return 0 || echo >&2 "Info: SSH connection failed, try $i/3"
+    _remote "$ip" true </dev/null \
+      && return 0 || echo >&2 "Info: SSH connection failed, try $i/3"
     sleep 5
   done
   echo >&2 "Error: Couldn't connect over SSH"
@@ -277,11 +278,11 @@ _buildInstance() {
   # Build config derivation
   # shellcheck disable=SC2086
   nix-instantiate $NF_NIX_BUILD_OPTS '<nixpkgs/nixos>' -A system --arg configuration "$confPath"
-  #nix-build $NF_NIX_BUILD_OPTS --no-out-link '<nixpkgs/nixos>' -A system \
-  #  --arg configuration "$confPath"
 }
 
 _pushInstance() {
+  local localRealize
+  local forceReboot
   local op; op="switch"
   local name
   local ip
@@ -329,18 +330,22 @@ EOF
 
   # Push config closure to instance
   if [[ -n $localRealize ]]; then
-    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
-      nix-copy-closure -s --to root@"$ip" "$path" \
-      || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
-    path=$(_remote "$ip" nix-store -r "$path") \
-      || { echo >&2 "Error: Failed to realize derivation on node: $path"; return 14; }
-  else
-    path=$(nix-store -r "$path")
+    echo >&2 "Realizing NixOS config on local host"
+    path=$(nix-store -r "$path") \
+      || { echo >&2 "Error: Failed to realize derivation locally: $path"; return 11; }
+    echo >&2 "Copying NixOS closure to remote host"
     NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
       nix-copy-closure -s --to root@"$ip" "$path" \
       || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
+  else
+    echo >&2 "Copying NixOS config derivation to remote host"
+    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+      nix-copy-closure -s --to root@"$ip" "$path" \
+      || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
+    echo >&2 "Realizing NixOS config on remote host"
+    path=$(_remote "$ip" nix-store -r "$path" </dev/null) \
+      || { echo >&2 "Error: Failed to realize derivation on node: $path"; return 14; }
   fi
-
 
   # Install config and infect instance with NixOS if not already
   _infect "$ip" switch "$op" "$path" || {
@@ -353,7 +358,7 @@ EOF
         echo >&2 "Instance needs to reboot to finish configuration"
         if [[ -n "$forceReboot" ]]; then
           echo >&2 "Rebooting..."
-          _remote "$ip" reboot || true
+          _remote "$ip" reboot </dev/null || true
         else
           echo >&2 "Refusing to reboot, use option --auto-reboot or reboot instance manually"
           exit 100
@@ -367,6 +372,7 @@ EOF
         ;;
     esac
   }
+  echo >&2 "Success!"
 }
 
 _init() {
@@ -470,6 +476,7 @@ push() {
 diff() {
   local name
   local path
+  local rpath
   local buildOutput
   local names
   local ip
@@ -482,9 +489,12 @@ diff() {
   buildOutput=$(build "${names[@]}") || return $?
   while read -r name path; do
     ip=$(_instance "$name" ip)
-    nix-diff \
-      "$(_remote "$ip" nix-store -qd /nix/var/nix/profiles/system)" \
-      "$(nix-store -qd "$path")" \
+    rpath=$(_remote "$ip" nix-store -qd /nix/var/nix/profiles/system </dev/null)
+
+    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+      nix-copy-closure -s --from root@"$ip" "$rpath" \
+
+    nix-diff "$rpath" "$path" \
       2> >(_ilog "$name") || return $?
   done <<<"$buildOutput"
 }
@@ -506,5 +516,7 @@ trap 'trap - TERM; kill $$' TERM
 cmd=${1:-help}
 declare -F | cut -d' ' -f3 | grep -q "^${cmd#_}$" \
   || _usage "No command: $cmd"
+
+[[ -z $NF_DEBUG ]] || set -x
 
 "${cmd#_}" "${@:2}" && printf "\nDone!\n" >&2
