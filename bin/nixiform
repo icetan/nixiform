@@ -40,6 +40,7 @@ Commands:
   check NAMES..           Check reachability of nodes
   build NAMES..           Build configurations
   push  OPTIONS NAMES..   Push configurations to nodes
+    -l|--local            Realize derivation locally
     -d|--dry              Upload closure but do not switch to configuration
     -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
   diff  NAMES..           Show diff of local and remote configuration
@@ -288,6 +289,7 @@ _pushInstance() {
   local path
 
   while [[ -n "$1" ]]; do case "$1" in
+    -l|--local) localRealize=1;;
     -d|--dry) op="dry-activate";;
     -r|--auto-reboot) forceReboot=1;;
     -*) echo >&2 "Not a recognized push option '$1'"; return 13;;
@@ -325,15 +327,14 @@ EOF
     ) "$LIB_DIR"/install-nix-2.3 | _remote "$ip" sh
   }
 
-  # shellcheck disable=SC2154
-  if [[ -z $buildRemote ]]; then
+  # Push config closure to instance
+  if [[ -n $localRealize ]]; then
     NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
       nix-copy-closure -s --to root@"$ip" "$path" \
       || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
     path=$(_remote "$ip" nix-store -r "$path") \
       || { echo >&2 "Error: Failed to realize derivation on node: $path"; return 14; }
   else
-    # Push config closure to instance
     path=$(nix-store -r "$path")
     NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
       nix-copy-closure -s --to root@"$ip" "$path" \
