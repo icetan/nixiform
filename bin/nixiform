@@ -44,6 +44,7 @@ Commands:
   build NAMES..           Build configurations
   push  OPTIONS NAMES..   Push configurations to nodes
     -l|--local            Realize derivation locally
+    -b|--bundle           Bundle derivations
     -d|--dry              Upload closure but do not switch to configuration
     -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
   diff  NAMES..           Show diff of local and remote configuration
@@ -95,6 +96,26 @@ _configs() {
     with import <nixpkgs> {};with builtins;
     attrNames (import ./nixiform.nix (lib.importJSON $INPUT_CACHE))
   " | jq -r '.[]'
+}
+
+_caches() {
+  local name="$1"
+  local confPath
+  local provider
+
+  _checkInstance "$name"
+  provider=$(_instance "$name" provider)
+  confPath="./.nixiform/configuration-$provider-$name.nix";
+
+  nix-instantiate --eval-only --strict --json -E "
+    with import <nixpkgs/nixos> { configuration = $confPath;}; with builtins;
+    if (config?nix && config.nix?binaryCaches && config.nix?binaryCachePublicKeys)
+    then [
+      (concatStringsSep \" \" config.nix.binaryCaches)
+      (concatStringsSep \" \" config.nix.binaryCachePublicKeys)
+    ]
+    else []
+  "
 }
 
 _secrets() {
@@ -304,8 +325,7 @@ _buildInstance() {
   # shellcheck disable=SC2086
   nix-instantiate $NF_NIX_BUILD_OPTS '<nixpkgs/nixos>' \
     -A system \
-    --arg configuration "$confPath" \
-    2> >(grep -v -- "--add-root")
+    --arg configuration "$confPath"
 }
 
 _pushInstance() {
@@ -319,6 +339,7 @@ _pushInstance() {
 
   while [[ -n "$1" ]]; do case "$1" in
     -l|--local) localRealize=1;;
+    -b|--bundle) bundleDerivations=1;;
     -d|--dry) op="dry-activate";;
     -r|--auto-reboot) forceReboot=1;;
     -*) echo >&2 "Not a recognized push option '$1'"; return 13;;
@@ -356,23 +377,41 @@ EOF
     ) "$LIB_DIR"/install-nix-2.3 | _remote "$ip" sh
   }
 
+  mapfile -t caches < <(_caches "$name" | jq -r '.[]')
+
   # Push config closure to instance
   if [[ -n $localRealize ]]; then
     echo >&2 "Realizing NixOS config on local host"
-    path=$(nix-store -r "$path") \
-      || { echo >&2 "Error: Failed to realize derivation locally: $path"; return 11; }
+    path=$(
+      nix-store -r "$path" \
+        --option substituters "${caches[0]}" \
+        --option trusted-public-keys "${caches[1]}"
+    ) || { echo >&2 "Error: Failed to realize derivation locally: $path"; return 11; }
     echo >&2 "Copying NixOS closure to remote host"
     NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
       nix-copy-closure -s --to root@"$ip" "$path" \
       || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
   else
-    echo >&2 "Copying NixOS config derivation to remote host"
-    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
-      nix-copy-closure -s --to root@"$ip" "$path" \
-      || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
+    if [[ -n $bundleDerivations ]]; then
+      echo >&2 "Copying NixOS bundled config derivations to remote host"
+      # shellcheck disable=SC2046
+      nix-store --export $(nix-store -qR "$path") \
+        | stdbuf -oL gzip \
+        | _remote "$ip" sh -c "gunzip | nix-store --import"
+    else
+      echo >&2 "Copying NixOS config derivation to remote host"
+      NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+        nix-copy-closure -s --to root@"$ip" "$path" \
+        || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
+    fi
     echo >&2 "Realizing NixOS config on remote host"
-    path=$(_remote "$ip" nix-store -r "$path" </dev/null) \
-      || { echo >&2 "Error: Failed to realize derivation on node: $path"; return 14; }
+    path=$(_remote "$ip" sh <<EOF
+      set -x
+      nix-store -r "$path" \
+        --option substituters '${caches[0]}' \
+        --option trusted-public-keys '${caches[1]}'
+EOF
+    ) || { echo >&2 "Error: Failed to realize derivation on node: $path"; return 14; }
   fi
 
   # Install config and infect instance with NixOS if not already
