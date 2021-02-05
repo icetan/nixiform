@@ -18,16 +18,29 @@ set -eo pipefail
 #  14  couldn't copy derivation closure to node
 #  100 instance needs reboot to complete
 
-# shellcheck disable=SC2153
-mapfile -t _NF_SSH_OPTS <<<"$NF_SSH_OPTS"
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
+export BIN_DIR
 LIB_DIR="${BIN_DIR%/*}/lib"
+export LIB_DIR
 INPUT_CACHE_NIX="./.input-cache.json"
+export INPUT_CACHE_NIX
 INPUT_CACHE="./.nixiform/.input-cache.json"
-SSH_OPTS=(-o "LogLevel=ERROR" -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" "${_NF_SSH_OPTS[@]}")
+export INPUT_CACHE
+SSH_OPTS="-o
+LogLevel=ERROR
+-o
+UserKnownHostsFile=/dev/null
+-o
+StrictHostKeyChecking=no"
+[[ -z $NF_SSH_OPTS ]] || SSH_OPTS+="
+$NF_SSH_OPTS"
+export SSH_OPTS
 declare -a TMP_FILES
 
 NF_CONFIGURATOR_PATH="${NF_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
+export NF_CONFIGURATOR_PATH
+NF_PAR="${NF_PAR-1}"
+export NF_PAR
 
 version() { tr -d '\n' < "$LIB_DIR"/version; }
 
@@ -66,28 +79,35 @@ EOF
 _usage() { printf >&2 "Error: %s\n\n" "$*"; help; exit 10; }
 
 _ilog() { sed "s|^|$1> |" >&2; }
+export -f _ilog
 
 _remote() {
+  mapfile -t opts <<<"$SSH_OPTS"
   # shellcheck disable=SC2086 disable=SC2029
-  ssh "${SSH_OPTS[@]}" root@"$1" "${@:2}"
+  ssh "${opts[@]}" root@"$1" "${@:2}"
 }
+export -f _remote
 
 _configuratorPath() {
   PATH="$NF_CONFIGURATOR_PATH" command -v "${1:-default}"
 }
+export -f _configuratorPath
 
 _infect() {
   _remote "$1" bash /dev/stdin "${@:2}" < "$LIB_DIR"/infect
 }
+export -f _infect
 
 _configure() {
   _remote "$2" bash < "$(_configuratorPath "$1")"
 }
+export -f _configure
 
 _instance() {
   # shellcheck disable=SC2119
   input | jq -r ".nodes.\"$1\" | .$2 // \"\""
 }
+export -f _instance
 
 _configs() {
   [ -f "./nixiform.nix" ] \
@@ -97,6 +117,7 @@ _configs() {
     attrNames (import ./nixiform.nix (lib.importJSON $INPUT_CACHE))
   " | jq -r '.[]'
 }
+export -f _configs
 
 _caches() {
   local name="$1"
@@ -117,6 +138,7 @@ _caches() {
     else []
   "
 }
+export -f _caches
 
 _secrets() {
   local name="$1"
@@ -136,6 +158,7 @@ _secrets() {
     else []
   "
 }
+export -f _secrets
 
 _pushSecrets() {
   local name="$1"
@@ -182,6 +205,7 @@ _pushSecrets() {
       | _remote "$ip" sh -c "true;$cmd" >&2
   fi
 }
+export -f _pushSecrets
 
 _checkInstance() {
   local name
@@ -189,6 +213,7 @@ _checkInstance() {
   name=$(_instance "$1") || return $?
   [ -n "$name" ] || { echo >&2 "Error: No instance with name: $1"; return 1; }
 }
+export -f _checkInstance
 
 _checkInstances() {
   local names
@@ -203,12 +228,14 @@ _checkInstances() {
     echo "${name}"
   done
 }
+export -f _checkInstances
 
 _checkConfigurator() {
   [ -f "$(_configuratorPath "$1")" ] || {
     echo >&2 "Error: No configurator found for provider: $1"; return 3
   }
 }
+export -f _checkConfigurator
 
 _checkUp() {
   local ip
@@ -223,6 +250,7 @@ _checkUp() {
   echo >&2 "Error: Couldn't connect over SSH"
   return 1
 }
+export -f _checkUp
 
 _initInstance() {
   local name
@@ -308,6 +336,7 @@ EOF
 
   echo "$name" "$confPath"
 }
+export -f _initInstance
 
 _buildInstance() {
   local ecode=0
@@ -327,6 +356,7 @@ _buildInstance() {
     -A system \
     --arg configuration "$confPath"
 }
+export -f _buildInstance
 
 _pushInstance() {
   local localRealize
@@ -378,6 +408,7 @@ EOF
   }
 
   mapfile -t caches < <(_caches "$name" | jq -r '.[]')
+  mapfile -t opts <<<"$SSH_OPTS"
 
   # Push config closure to instance
   if [[ -n $localRealize ]]; then
@@ -388,7 +419,7 @@ EOF
         --option trusted-public-keys "${caches[1]}"
     ) || { echo >&2 "Error: Failed to realize derivation locally: $path"; return 11; }
     echo >&2 "Copying NixOS closure to remote host"
-    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+    NIX_SSHOPTS="${opts[*]} PATH=/root/.nix-profile/bin:\$PATH" \
       nix-copy-closure -s --to root@"$ip" "$path" \
       || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
   else
@@ -400,7 +431,7 @@ EOF
         | _remote "$ip" sh -c "gunzip | nix-store --import"
     else
       echo >&2 "Copying NixOS config derivation to remote host"
-      NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+      NIX_SSHOPTS="${opts[*]} PATH=/root/.nix-profile/bin:\$PATH" \
         nix-copy-closure -s --to root@"$ip" "$path" \
         || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
     fi
@@ -439,18 +470,39 @@ EOF
         ;;
     esac
   }
-  echo >&2 "Success!"
+  echo >&2 "Push successful!"
 }
+export -f _pushInstance
+
+_pushAll() {
+  local flags
+  local name
+  local path
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
+    *)
+      if [[ -z "$name" ]]; then
+        name="$1"
+      elif [[ -z "$path" ]]; then
+        path="$1"
+      fi;;
+  esac; shift; done
+
+  _pushSecrets "$name" \
+    2> >(_ilog "$name")
+  _pushInstance "$name" "$path" "${flags[@]}" \
+    2> >(_ilog "$name") || return $?
+}
+export -f _pushAll
 
 _init() {
   local instances
 
   instances=$(_checkInstances "$@") || return $?
   check "$@" || return $?
-  while read -r name; do
-    _initInstance "$name" \
-      2> >(_ilog "$name")
-  done <<<"$instances"
+  # shellcheck disable=SC2016
+  xargs -L1 -P"$NF_PAR" bash -c '_initInstance "$1" 2> >(_ilog "$1")' _ <<<"$instances"
 }
 
 _inputHook() {
@@ -460,6 +512,7 @@ _inputHook() {
     ./.nixiform/input-hook > "$INPUT_CACHE"
   }
 }
+export -f _inputHook
 
 # CLI commands
 
@@ -488,19 +541,16 @@ input() {
   { _inputHook && jq -rM ".$1 // \"\"" "$INPUT_CACHE"; } \
     || { echo >&2 "Error: Input transform failed"; return 6; }
 }
+export -f input
 
 check() {
   local instances
   local ecode; ecode=0
 
   instances=$(_checkInstances "$@") || return $?
-  for name in $instances; do
-    _checkUp "$name" \
-      2> >(_ilog "$name") \
-      || { ecode=9; continue; }
-  done
-  [ "$ecode" == 0 ] || echo >&2 "Error: Couldn't reach all instance"
-  return $ecode
+  # shellcheck disable=SC2016
+  xargs -L1 -P"$NF_PAR" bash -c '_checkUp "$1" 2> >(_ilog "$1")' _ <<<"$instances" \
+    || { ecode=$?; echo >&2 "Error: Couldn't reach all instance"; return $ecode; }
 }
 
 build() {
@@ -508,13 +558,16 @@ build() {
   local instances
 
   instances=$(_checkInstances "$@") || return $?
-  while read -r name; do
-    { path=$(_buildInstance "$name") || {
+
+  # shellcheck disable=SC2016
+  xargs -L1 -P"$NF_PAR" bash -c '
+    { path=$(_buildInstance "$1") || {
         echo >&2 "Error: Failed to build config"; return 4
       }
-    } 2> >(_ilog "$name")
-    echo "$name" "$path"
-  done <<<"$instances"
+    } 2> >(_ilog "$1")
+    echo "$1" "$path"
+  ' _ <<<"$instances" \
+    || { ecode=$?;echo >&2 "Error: Couldn't build all instances"; return $ecode; }
 }
 
 push() {
@@ -531,12 +584,8 @@ push() {
 
   buildOutput=$(build "${names[@]}") || return $?
   check "${names[@]}" || return $?
-  while read -r name path; do
-    _pushSecrets "$name" \
-      2> >(_ilog "$name")
-    _pushInstance "$name" "$path" "${flags[@]}" \
-      2> >(_ilog "$name") || return $?
-  done <<<"$buildOutput"
+  # shellcheck disable=SC2016
+  xargs -L1 -P"$NF_PAR" bash -c '_pushAll "$@"' _ "${flags[@]}" <<<"$buildOutput"
   check "${names[@]}" || return $?
 }
 
@@ -553,12 +602,14 @@ diff() {
     *) names+=("$1");;
   esac; shift; done
 
+  mapfile -t opts <<<"$SSH_OPTS"
+
   buildOutput=$(build "${names[@]}") || return $?
   while read -r name path; do
     ip=$(_instance "$name" ip)
     rpath=$(_remote "$ip" nix-store -qd /nix/var/nix/profiles/system </dev/null)
 
-    NIX_SSHOPTS="${SSH_OPTS[*]} PATH=/root/.nix-profile/bin:\$PATH" \
+    NIX_SSHOPTS="${opts[*]} PATH=/root/.nix-profile/bin:\$PATH" \
       nix-copy-closure -s --from root@"$ip" "$rpath" \
 
     nix-diff "$rpath" "$path" \
@@ -571,10 +622,9 @@ secret() {
   local name
 
   instances=$(_checkInstances "$@") || return $?
-  while read -r name; do
-    _pushSecrets "$name" \
-      2> >(_ilog "$name")
-  done <<<"$instances"
+
+  # shellcheck disable=SC2016
+  xargs -L1 -P"$NF_PAR" bash -c '_pushSecrets "$1" 2> >(_ilog "$1")' _ <<<"$instances"
 }
 
 trap 'trap - EXIT; rm -fr "$INPUT_CACHE" "${TMP_FILES[@]}"' EXIT
