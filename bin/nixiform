@@ -35,7 +35,6 @@ StrictHostKeyChecking=no"
 [[ -z $NF_SSH_OPTS ]] || SSH_OPTS+="
 $NF_SSH_OPTS"
 export SSH_OPTS
-declare -a TMP_FILES
 
 NF_CONFIGURATOR_PATH="${NF_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
 export NF_CONFIGURATOR_PATH
@@ -71,6 +70,8 @@ Environment variables:
                           Example: "--show-trace"
   NF_SSH_OPTS             Additional aguments to pass to \`ssh\`
                           Example: "-i ~/.ssh/id_rsa"
+  NF_PAR                  Set how many parallel process to launch
+                          Default: 1
 
 Version: $(version)
 EOF
@@ -172,7 +173,6 @@ _pushSecrets() {
   ip=$(_instance "$name" ip)
   file=$(_secrets "$name" | jq -c '.[]') || return $?
   tmp=$(mktemp -d tmpsecret.XXXXX)
-  TMP_FILES+=("$tmp")
   rsec=$(_remote "$ip" sh -c "true
     mkdir -p /run/nf-keys
     chmod 755 /run/nf-keys
@@ -201,9 +201,11 @@ _pushSecrets() {
     $own
   "
   if [[ -n $cmd ]]; then
-    tar czv -C "$tmp" -T <(cd "$tmp"; ls -1A) --mtime='1970-01-01 01:00:00' \
-      | _remote "$ip" sh -c "true;$cmd" >&2
+    { tar czv -C "$tmp" -T <(cd "$tmp"; ls -1A) --mtime='1970-01-01 01:00:00' \
+      | _remote "$ip" sh -c "true;$cmd"
+    } 2>&1 | sed 's/^/Secret /' >&2
   fi
+  rm -rf "$tmp"
 }
 export -f _pushSecrets
 
@@ -627,7 +629,7 @@ secret() {
   xargs -L1 -P"$NF_PAR" bash -c '_pushSecrets "$1" 2> >(_ilog "$1")' _ <<<"$instances"
 }
 
-trap 'trap - EXIT; rm -fr "$INPUT_CACHE" "${TMP_FILES[@]}"' EXIT
+trap 'trap - EXIT; rm -f "$INPUT_CACHE"' EXIT
 trap 'trap - TERM; kill $$' TERM
 
 cmd=${1:-help}
