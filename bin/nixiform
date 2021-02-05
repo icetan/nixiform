@@ -18,11 +18,13 @@ set -eo pipefail
 #  14  couldn't copy derivation closure to node
 #  100 instance needs reboot to complete
 
+# shellcheck disable=SC2153
+mapfile -t _NF_SSH_OPTS <<<"$NF_SSH_OPTS"
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 LIB_DIR="${BIN_DIR%/*}/lib"
 INPUT_CACHE_NIX="./.input-cache.json"
 INPUT_CACHE="./.nixiform/.input-cache.json"
-SSH_OPTS=(-o "LogLevel=ERROR" -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" "${NF_SSH_OPTS[@]}")
+SSH_OPTS=(-o "LogLevel=ERROR" -o "UserKnownHostsFile=/dev/null" -o "StrictHostKeyChecking=no" "${_NF_SSH_OPTS[@]}")
 declare -a TMP_FILES
 
 NF_CONFIGURATOR_PATH="${NF_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
