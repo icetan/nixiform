@@ -564,7 +564,7 @@ build() {
   # shellcheck disable=SC2016
   xargs -L1 -P"$NF_PAR" bash -c '
     { path=$(_buildInstance "$1") || {
-        echo >&2 "Error: Failed to build config"; return 4
+        echo >&2 "Error: Failed to build config"; exit 4
       }
     } 2> >(_ilog "$1")
     echo "$1" "$path"
