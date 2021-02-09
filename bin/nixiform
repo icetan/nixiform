@@ -60,6 +60,7 @@ Commands:
     -d|--dry              Upload closure but do not switch to configuration
     -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
   diff  NAMES..           Show diff of local and remote configuration
+  output NAME NIX_EXPR    Print NixOS config using a Nix expression, e.g. \`nix.binaryCaches\`
   help                    This message
 
 Environment variables:
@@ -119,6 +120,22 @@ _configs() {
   " | jq -r '.[]'
 }
 export -f _configs
+
+_output() {
+  local name="$1"
+  local confPath
+  local provider
+
+  _checkInstance "$name"
+  provider=$(_instance "$name" provider)
+  confPath="./.nixiform/configuration-$provider-$name.nix";
+
+  nix-instantiate --eval-only --strict --json -E "
+    with (import <nixpkgs/nixos> { configuration = $confPath;}).config;
+    ${*:2}
+  "
+}
+export -f _output
 
 _caches() {
   local name="$1"
@@ -544,6 +561,12 @@ input() {
     || { echo >&2 "Error: Input transform failed"; return 6; }
 }
 export -f input
+
+output() {
+  { _output "$@" | jq -rM .; } \
+    || { echo >&2 "Error: Output transform failed"; return 6; }
+}
+export -f output
 
 check() {
   local instances
