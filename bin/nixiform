@@ -117,7 +117,7 @@ _instance() {
 export -f _instance
 
 _configs() {
-  [ -f "./nixiform.nix" ] \
+  [[ -f "./nixiform.nix" ]] \
     || { echo >&2 "Error: No deploy file (nixiform.nix) found"; return 7; }
   _inputHook && nix-instantiate --eval-only --json -E "
     with import <nixpkgs> {};with builtins;
@@ -126,15 +126,26 @@ _configs() {
 }
 export -f _configs
 
-_output() {
+_confPath() {
   local name="$1"
-  local confPath
   local provider
+  local path
 
   _checkInstance "$name"
   provider=$(_instance "$name" provider)
-  confPath="./.nixiform/configuration-$provider-$name.nix";
+  path="./.nixiform/configuration-$provider-$name.nix"
 
+  [[ -f $path ]] \
+    || { echo >&2 "INFO: Not yet initialized"; _initInstance "$name" >/dev/null; }
+  printf %s "$path"
+}
+export -f _confPath
+
+_output() {
+  local name="$1"
+  local confPath
+
+  confPath=$(_confPath "$name")
   nix-instantiate --eval-only --strict --json -E "
     with (import <nixpkgs/nixos> { configuration = $confPath;}).config;
     ${*:2}
@@ -145,12 +156,8 @@ export -f _output
 _caches() {
   local name="$1"
   local confPath
-  local provider
 
-  _checkInstance "$name"
-  provider=$(_instance "$name" provider)
-  confPath="./.nixiform/configuration-$provider-$name.nix";
-
+  confPath=$(_confPath "$name")
   nix-instantiate --eval-only --strict --json -E "
     with import <nixpkgs/nixos> { configuration = $confPath;}; with builtins;
     if (config?nix && config.nix?binaryCaches && config.nix?binaryCachePublicKeys)
@@ -166,12 +173,8 @@ export -f _caches
 _secrets() {
   local name="$1"
   local confPath
-  local provider
 
-  _checkInstance "$name"
-  provider=$(_instance "$name" provider)
-  confPath="./.nixiform/configuration-$provider-$name.nix";
-
+  confPath=$(_confPath "$name")
   nix-instantiate --eval-only --strict --json -E "
     with import <nixpkgs/nixos> { configuration = $confPath;}; with builtins;
     if (config?nixiform && config.nixiform?filesIn)
@@ -366,11 +369,8 @@ _buildInstance() {
   local ecode=0
   local name="$1"
   local confPath
-  local provider
 
-  _checkInstance "$name"
-  provider=$(_instance "$name" provider)
-  confPath="./.nixiform/configuration-$provider-$name.nix";
+  confPath=$(_confPath "$name")
 
   echo >&2 "Building config..."
 
