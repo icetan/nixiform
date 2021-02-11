@@ -83,6 +83,11 @@ _usage() { printf >&2 "Error: %s\n\n" "$*"; help; exit 10; }
 _ilog() { sed "s|^|$1> |" >&2; }
 export -f _ilog
 
+_par() {
+  xargs -L1 -P"$NF_PAR" bash -c "set -eo pipefail;$1" _ "${@:2}"
+}
+export -f _par
+
 _remote() {
   mapfile -t opts <<<"$SSH_OPTS"
   # shellcheck disable=SC2086 disable=SC2029
@@ -521,7 +526,7 @@ _init() {
   instances=$(_checkInstances "$@") || return $?
   check "$@" || return $?
   # shellcheck disable=SC2016
-  xargs -L1 -P"$NF_PAR" bash -c '_initInstance "$1" 2> >(_ilog "$1")' _ <<<"$instances"
+  _par '_initInstance "$1" 2> >(_ilog "$1")' <<<"$instances"
 }
 
 _inputHook() {
@@ -574,7 +579,7 @@ check() {
 
   instances=$(_checkInstances "$@") || return $?
   # shellcheck disable=SC2016
-  xargs -L1 -P"$NF_PAR" bash -c '_checkUp "$1" 2> >(_ilog "$1")' _ <<<"$instances" \
+  _par '_checkUp "$1" 2> >(_ilog "$1")' <<<"$instances" \
     || { ecode=$?; echo >&2 "Error: Couldn't reach all instance"; return $ecode; }
 }
 
@@ -585,13 +590,13 @@ build() {
   instances=$(_checkInstances "$@") || return $?
 
   # shellcheck disable=SC2016
-  xargs -L1 -P"$NF_PAR" bash -c '
+  _par '
     { path=$(_buildInstance "$1") || {
         echo >&2 "Error: Failed to build config"; exit 4
       }
     } 2> >(_ilog "$1")
     echo "$1" "$path"
-  ' _ <<<"$instances" \
+  ' <<<"$instances" \
     || { ecode=$?;echo >&2 "Error: Couldn't build all instances"; return $ecode; }
 }
 
@@ -610,7 +615,7 @@ push() {
   buildOutput=$(build "${names[@]}") || return $?
   check "${names[@]}" || return $?
   # shellcheck disable=SC2016
-  xargs -L1 -P"$NF_PAR" bash -c '_pushAll "$@"' _ "${flags[@]}" <<<"$buildOutput"
+  _par '_pushAll "$@"' "${flags[@]}" <<<"$buildOutput"
   check "${names[@]}" || return $?
 }
 
@@ -649,7 +654,7 @@ secret() {
   instances=$(_checkInstances "$@") || return $?
 
   # shellcheck disable=SC2016
-  xargs -L1 -P"$NF_PAR" bash -c '_pushSecrets "$1" 2> >(_ilog "$1")' _ <<<"$instances"
+  _par '_pushSecrets "$1" 2> >(_ilog "$1")' <<<"$instances"
 }
 
 trap 'trap - EXIT; rm -f "$INPUT_CACHE"' EXIT
