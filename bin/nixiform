@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -eo pipefail
+shopt -s inherit_errexit failglob
 
 # Exit codes:
 #   1  no instance with name
@@ -11,7 +12,7 @@ set -eo pipefail
 #   7  no deploy file (nixiform.nix) found
 #   8  config push failed
 #   9  couldn't reach instance
-#  10  no instance with name
+#  10  wrong arguments to CLI
 #  11  couldn't copy closure to node
 #  12  refuse to infect when dry push
 #  13  invalid option
@@ -84,7 +85,7 @@ _ilog() { sed "s|^|$1> |" >&2; }
 export -f _ilog
 
 _par() {
-  xargs -L1 -P"$NF_PAR" bash -c "set -eo pipefail;$1" _ "${@:2}"
+  xargs -L1 -P"$NF_PAR" bash -c "set -eo pipefail;shopt -s inherit_errexit failglob; $([[ -z $NF_DEBUG ]] || echo set -x\;) $1" _ "${@:2}"
 }
 export -f _par
 
@@ -106,7 +107,9 @@ _infect() {
 export -f _infect
 
 _configure() {
-  _remote "$2" bash < "$(_configuratorPath "$1")"
+  local path
+  path=$(_configuratorPath "$1")
+  _remote "$2" bash < "$path"
 }
 export -f _configure
 
@@ -155,15 +158,11 @@ export -f _output
 
 _caches() {
   local name="$1"
-  local confPath
-
-  confPath=$(_confPath "$name")
-  nix-instantiate --eval-only --strict --json -E "
-    with import <nixpkgs/nixos> { configuration = $confPath;}; with builtins;
-    if (config?nix && config.nix?binaryCaches && config.nix?binaryCachePublicKeys)
+  _output "$name" "with builtins;
+    if (nix?binaryCaches && nix?binaryCachePublicKeys)
     then [
-      (concatStringsSep \" \" config.nix.binaryCaches)
-      (concatStringsSep \" \" config.nix.binaryCachePublicKeys)
+      (concatStringsSep \" \" nix.binaryCaches)
+      (concatStringsSep \" \" nix.binaryCachePublicKeys)
     ]
     else []
   "
@@ -172,22 +171,20 @@ export -f _caches
 
 _secrets() {
   local name="$1"
-  local confPath
-
-  confPath=$(_confPath "$name")
-  nix-instantiate --eval-only --strict --json -E "
-    with import <nixpkgs/nixos> { configuration = $confPath;}; with builtins;
-    if (config?nixiform && config.nixiform?filesIn)
-    then map (k: let i = config.nixiform.filesIn.\"\${k}\"; in
-        [ i.path config.nixiform.filesOut.\"\${k}\" i.chmod i.user i.group ]
-      ) (attrNames config.nixiform.filesIn)
+  _output "$name" "with builtins;
+    if nixiform?filesIn
+    then map (k: let i = nixiform.filesIn.\"\${k}\"; in
+        [ i.path nixiform.filesOut.\"\${k}\" i.chmod i.user i.group ]
+      ) (attrNames nixiform.filesIn)
     else []
   "
 }
 export -f _secrets
 
 _pushSecrets() {
-  local name="$1"
+  local op
+  local name
+  local dry
   local ip
   local file
   local tmp
@@ -195,8 +192,15 @@ _pushSecrets() {
   local own
   local cmd
 
+  while [[ -n "$1" ]]; do case "$1" in
+    -d|--dry) dry=1;;
+    -*) true;;
+    *) if [[ -z "$name" ]]; then name="$1"; fi
+      ;;
+  esac; shift; done
+
   ip=$(_instance "$name" ip)
-  file=$(_secrets "$name" | jq -c '.[]') || return $?
+  file=$(_secrets "$name" | jq -c '.[]')
   tmp=$(mktemp -d tmpsecret.XXXXX)
   rsec=$(_remote "$ip" sh -c "true
     mkdir -p /run/nf-keys
@@ -210,6 +214,7 @@ _pushSecrets() {
       rsec=$(sed "/$(basename "${l[1]}")\$/d" <<<"$rsec")
     else
       cp -r "${l[0]}" "$tmp/$(basename "${l[1]}")"
+      op=1
     fi
     own+="
       chmod -R ${l[2]} ${l[1]}
@@ -218,17 +223,39 @@ _pushSecrets() {
     "
   done <<<"$file"
 
-  [[ -z $rsec ]] || cmd+="
-    rm -rfv $(tr '\n' ' ' <<<"$rsec")
-  "
-  [[ -z $own ]] || cmd+="
-    tar xz -C /run/nf-keys
-    $own
-  "
+  if [[ -n $rsec ]]; then
+    op=1
+    if [[ -n $dry ]]; then
+      cmd+="
+        echo 'would remove: $rsec'
+      "
+    else
+      cmd+="
+        rm -rfv $(tr '\n' ' ' <<<"$rsec")
+      "
+    fi
+  fi
+
+  if [[ -n $own ]]; then
+    if [[ -n $dry ]]; then
+      cmd+="
+        tar tzv | sed 's/^/would extract: /'
+      "
+    else
+      cmd+="
+        tar xz -C /run/nf-keys
+        $own
+      "
+    fi
+  fi
+
   if [[ -n $cmd ]]; then
     { tar czv -C "$tmp" -T <(cd "$tmp"; ls -1A) --mtime='1970-01-01 01:00:00' \
       | _remote "$ip" sh -c "true;$cmd"
     } 2>&1 | sed 's/^/Secret /' >&2
+  fi
+  if [[ -z $op ]]; then
+    echo >&2 "Secrets already in sync, doing nothing"
   fi
   rm -rf "$tmp"
 }
@@ -237,8 +264,8 @@ export -f _pushSecrets
 _checkInstance() {
   local name
 
-  name=$(_instance "$1") || return $?
-  [ -n "$name" ] || { echo >&2 "Error: No instance with name: $1"; return 1; }
+  name=$(_instance "$1")
+  [[ -n $name ]] || { echo >&2 "Error: No instance with name: $1"; return 1; }
 }
 export -f _checkInstance
 
@@ -248,17 +275,19 @@ _checkInstances() {
 
   if [ -n "$*" ]
     then names=("$@")
-    else names_=$(_configs) || return $?; mapfile -t names < <(echo "$names_")
+    else names_=$(_configs); mapfile -t names < <(echo "$names_")
   fi
   for name in "${names[@]}"; do
-    _checkInstance "${name}" || return $?
+    _checkInstance "${name}"
     echo "${name}"
   done
 }
 export -f _checkInstances
 
 _checkConfigurator() {
-  [ -f "$(_configuratorPath "$1")" ] || {
+  local path
+  path=$(_configuratorPath "$1")
+  [[ -f "$path" ]] || {
     echo >&2 "Error: No configurator found for provider: $1"; return 3
   }
 }
@@ -280,17 +309,16 @@ _checkUp() {
 export -f _checkUp
 
 _initInstance() {
-  local name
+  local name; name="$1"
   local ip
   local provider
   local physicalNix
   local confPath
 
-  name="$1"
   _checkInstance "$name"
 
   provider=$(_instance "$name" provider)
-  _checkConfigurator "$provider" || return $?
+  _checkConfigurator "$provider"
 
   ip=$(_instance "$name" ip)
 
@@ -301,7 +329,7 @@ _initInstance() {
 
   # Get instance specific config
   confPath="./.nixiform/configuration-$provider-$name.nix";
-  physicalNix=$(_configure "$provider" "$ip") || return $?
+  physicalNix=$(_configure "$provider" "$ip")
 
   _inputHook && cat > "$confPath" <<EOF
 { lib, ... }: with builtins; let
@@ -513,18 +541,18 @@ _pushAll() {
       fi;;
   esac; shift; done
 
-  _pushSecrets "$name" \
+  _pushSecrets "$name" "${flags[@]}" \
     2> >(_ilog "$name")
   _pushInstance "$name" "$path" "${flags[@]}" \
-    2> >(_ilog "$name") || return $?
+    2> >(_ilog "$name")
 }
 export -f _pushAll
 
 _init() {
   local instances
 
-  instances=$(_checkInstances "$@") || return $?
-  check "$@" || return $?
+  instances=$(_checkInstances "$@")
+  check "$@"
   # shellcheck disable=SC2016
   _par '_initInstance "$1" 2> >(_ilog "$1")' <<<"$instances"
 }
@@ -562,14 +590,23 @@ EOF
 
 # shellcheck disable=SC2120
 input() {
-  { _inputHook && jq -rM ".$1 // \"\"" "$INPUT_CACHE"; } \
-    || { echo >&2 "Error: Input transform failed"; return 6; }
+  _inputHook
+  jq -rM ".$1 // \"\"" "$INPUT_CACHE"
 }
 export -f input
 
 output() {
-  { _output "$@" | jq -rM .; } \
-    || { echo >&2 "Error: Output transform failed"; return 6; }
+  local name; name="$1"
+  local exprs; exprs=("${@:2}")
+
+  [[ -n "$name" ]] \
+    || _usage "Missing instance name as first argument"
+  [[ -n "${exprs[*]}" ]] \
+    || _usage "Missing Nix expression as second argument"
+
+  _output "$name" "${exprs[@]}" \
+    2> >(_ilog "$1") \
+    | jq -rM .
 }
 export -f output
 
@@ -577,7 +614,7 @@ check() {
   local instances
   local ecode; ecode=0
 
-  instances=$(_checkInstances "$@") || return $?
+  instances=$(_checkInstances "$@")
   # shellcheck disable=SC2016
   _par '_checkUp "$1" 2> >(_ilog "$1")' <<<"$instances" \
     || { ecode=$?; echo >&2 "Error: Couldn't reach all instance"; return $ecode; }
@@ -587,7 +624,7 @@ build() {
   local path
   local instances
 
-  instances=$(_checkInstances "$@") || return $?
+  instances=$(_checkInstances "$@")
 
   # shellcheck disable=SC2016
   _par '
@@ -612,11 +649,11 @@ push() {
     *) names+=("$1");;
   esac; shift; done
 
-  buildOutput=$(build "${names[@]}") || return $?
-  check "${names[@]}" || return $?
+  buildOutput=$(build "${names[@]}")
+  check "${names[@]}"
   # shellcheck disable=SC2016
   _par '_pushAll "$@"' "${flags[@]}" <<<"$buildOutput"
-  check "${names[@]}" || return $?
+  check "${names[@]}"
 }
 
 diff() {
@@ -634,7 +671,7 @@ diff() {
 
   mapfile -t opts <<<"$SSH_OPTS"
 
-  buildOutput=$(build "${names[@]}") || return $?
+  buildOutput=$(build "${names[@]}")
   while read -r name path; do
     ip=$(_instance "$name" ip)
     rpath=$(_remote "$ip" nix-store -qd /nix/var/nix/profiles/system </dev/null)
@@ -643,21 +680,35 @@ diff() {
       nix-copy-closure -s --from root@"$ip" "$rpath" \
 
     nix-diff "$rpath" "$path" \
-      2> >(_ilog "$name") || return $?
+      2> >(_ilog "$name")
   done <<<"$buildOutput"
 }
 
 secret() {
+  local flags
+  local names
   local instances
-  local name
 
-  instances=$(_checkInstances "$@") || return $?
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
+    *) names+=("$1");;
+  esac; shift; done
+
+
+  instances=$(_checkInstances "${names[@]}")
 
   # shellcheck disable=SC2016
-  _par '_pushSecrets "$1" 2> >(_ilog "$1")' <<<"$instances"
+  _par '_pushSecrets "$@" 2> >(_ilog "$1")' "${flags[@]}" <<<"$instances"
 }
 
-trap 'trap - EXIT; rm -f "$INPUT_CACHE"' EXIT
+trap 'ecode=$?;trap - EXIT
+  if [[ $ecode == 0 ]]; then
+    echo >&2 "Success!"
+  else
+    echo >&2 "Failed($ecode)!"
+  fi
+  rm -f "$INPUT_CACHE"
+' EXIT
 trap 'trap - TERM; kill $$' TERM
 
 cmd=${1:-help}
@@ -666,4 +717,4 @@ declare -F | cut -d' ' -f3 | grep -q "^${cmd#_}$" \
 
 [[ -z $NF_DEBUG ]] || set -x
 
-"${cmd#_}" "${@:2}" && printf "\nDone!\n" >&2
+"${cmd#_}" "${@:2}"
