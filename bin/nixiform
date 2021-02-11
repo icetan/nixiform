@@ -49,17 +49,17 @@ Usage: nixiform COMMAND [ARGS]
 
 Commands:
 
-  init NAMES..            Create input from Terraform state
+  init   NAMES..          Create input from Terraform state
   initFromJSON NAMES..    Create input from ./nixiform-input.json
-  input JSON_PATH         Print input data
-  check NAMES..           Check reachability of nodes
-  build NAMES..           Build configurations
-  push  OPTIONS NAMES..   Push configurations to nodes
+  input  JSON_PATH        Print input data
+  check  NAMES..          Check reachability of nodes
+  build  NAMES..          Build configurations
+  push   OPTIONS NAMES..  Push configurations to nodes
     -l|--local            Realize derivation locally
     -b|--bundle           Bundle derivations
     -d|--dry              Upload closure but do not switch to configuration
     -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
-  diff  NAMES..           Show diff of local and remote configuration
+  diff   NAMES..          Show diff of local and remote configuration
   output NAME NIX_EXPR    Print NixOS config using a Nix expression, e.g. \`nix.binaryCaches\`
   help                    This message
 
