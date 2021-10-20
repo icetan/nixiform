@@ -60,6 +60,9 @@ Commands:
     -b|--bundle           Bundle derivations
     -d|--dry              Upload closure but do not switch to configuration
     -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
+  secret NAMES..          Copy secrets to remote nodes
+    -d|--dry              Check but don't copy
+    -f|--force            Force copy
   diff   NAMES..          Show diff of local and remote configuration
   output NAME NIX_EXPR    Print NixOS config using a Nix expression, e.g. \`nix.binaryCaches\`
   help                    This message
@@ -85,6 +88,7 @@ _ilog() { sed "s|^|$1> |" >&2; }
 export -f _ilog
 
 _par() {
+  # shellcheck disable=SC2030
   xargs -L1 -P"$NF_PAR" bash -c "set -eo pipefail;shopt -s inherit_errexit failglob; $([[ -z $NF_DEBUG ]] || echo set -x\;) $1" _ "${@:2}"
 }
 export -f _par
@@ -185,6 +189,7 @@ _pushSecrets() {
   local op
   local name
   local dry
+  local force
   local ip
   local file
   local tmp
@@ -194,6 +199,7 @@ _pushSecrets() {
 
   while [[ -n "$1" ]]; do case "$1" in
     -d|--dry) dry=1;;
+    -f|--force) force=1;;
     -*) true;;
     *) if [[ -z "$name" ]]; then name="$1"; fi
       ;;
@@ -210,7 +216,7 @@ _pushSecrets() {
 
   while read -r line && [ -n "$line" ]; do
     mapfile -t l < <(jq -r '.[]' <<<"$line")
-    if grep -q "^${l[1]}\$" <<<"$rsec"; then
+    if [[ -z $force ]] && grep -q "^${l[1]}\$" <<<"$rsec"; then
       rsec=$(sed "/$(basename "${l[1]}")\$/d" <<<"$rsec")
     else
       cp -r "${l[0]}" "$tmp/$(basename "${l[1]}")"
@@ -698,7 +704,7 @@ secret() {
   instances=$(_checkInstances "${names[@]}")
 
   # shellcheck disable=SC2016
-  _par '_pushSecrets "$@" 2> >(_ilog "$1")' "${flags[@]}" <<<"$instances"
+  _par '_pushSecrets "$@" 2> >(_ilog "${@:$#}")' "${flags[@]}" <<<"$instances"
 }
 
 trap 'ecode=$?;trap - EXIT
@@ -715,6 +721,7 @@ cmd=${1:-help}
 declare -F | cut -d' ' -f3 | grep -q "^${cmd#_}$" \
   || _usage "No command: $cmd"
 
+# shellcheck disable=SC2031
 [[ -z $NF_DEBUG ]] || set -x
 
 "${cmd#_}" "${@:2}"

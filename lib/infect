@@ -36,7 +36,7 @@ switch() {
   local op; op="$1"
   local configPath; configPath="$2"
 
-  # shellcheck disable=SC1090
+  # shellcheck disable=SC1090 disable=SC1091
   [ -n "$NIX_PATH" ] || source "$HOME"/.nix-profile/etc/profile.d/nix.sh
 
   nix-env --set "$configPath" -p /nix/var/nix/profiles/system
