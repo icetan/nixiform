@@ -192,6 +192,7 @@ _pushSecrets() {
   local force
   local ip
   local file
+  local dir
   local tmp
   local rsec
   local own
@@ -207,11 +208,12 @@ _pushSecrets() {
 
   ip=$(_instance "$name" ip)
   file=$(_secrets "$name" | jq -c '.[]')
+  dir=$(_output "$name" 'nixiform.filesDir' | jq -r .)
   tmp=$(mktemp -d tmpsecret.XXXXX)
   rsec=$(_remote "$ip" sh -c "true
-    mkdir -p /run/nf-keys
-    chmod 755 /run/nf-keys
-    find /run/nf-keys -mindepth 1 -maxdepth 1
+    mkdir -p \"$dir\"
+    chmod 755 \"$dir\"
+    find \"$dir\" -mindepth 1 -maxdepth 1
   " </dev/null)
 
   while read -r line && [ -n "$line" ]; do
@@ -249,7 +251,7 @@ _pushSecrets() {
       "
     else
       cmd+="
-        tar xz -C /run/nf-keys
+        tar xz -C \"$dir\"
         $own
       "
     fi
@@ -366,12 +368,17 @@ in {
         };});
         default = {};
       };
+      options.nixiform.filesDir = mkOption {
+        description = "Remote directory path to upload files to.";
+        type = types.str;
+        default = "/var/lib/nf-keys";
+      };
       options.nixiform.filesOut = mkOption {
         description = "Attrset of paths to remote files, name -> server path.";
         type = with types; attrsOf str;
         default = {};
       };
-      config.nixiform.filesOut = mapAttrs (k: v: "/run/nf-keys/"+(hash v.path)) config.nixiform.filesIn;
+      config.nixiform.filesOut = mapAttrs (k: v: config.nixiform.filesDir+"/"+(hash v.path)) config.nixiform.filesIn;
       config.system.activationScripts.nf-keys-permissons = concatMapStrings
         (k: let
           i = config.nixiform.filesIn."\${k}";
