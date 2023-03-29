@@ -362,6 +362,7 @@ in {
         description = "Attrset of paths to local files, name -> local path.";
         type = with types; attrsOf (submodule { options = {
           path = mkOption { type = path; };
+          links = mkOption { type = listOf str; default = []; };
           chmod = mkOption { type = strMatching "[0-7]+"; default = "0600"; };
           user = mkOption { type = enum (attrNames config.users.users); default = "root"; };
           group = mkOption { type = enum (attrNames config.users.groups); default = "root"; };
@@ -385,6 +386,7 @@ in {
           o = config.nixiform.filesOut."\${k}";
         in ''
           chown -R "\${i.user}:\${i.group}" "\${o}"
+          \${concatMapStringsSep "\\n" (ln: "ln -sfT '\${o}' '\${ln}'") i.links}
         '')
         (attrNames config.nixiform.filesIn);
     })
