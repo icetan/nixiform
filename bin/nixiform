@@ -503,7 +503,7 @@ EOF
         || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
     fi
     echo >&2 "Realizing NixOS config on remote host"
-    path=$(_remote "$ip" sh <<EOF
+    path=$(_remote "$ip" sh -l <<EOF
       set -x
       nix-store -r "$path" \
         --option substituters '${caches[0]}' \
