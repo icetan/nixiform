@@ -127,8 +127,8 @@ _configs() {
   [[ -f "./nixiform.nix" ]] \
     || { echo >&2 "Error: No deploy file (nixiform.nix) found"; return 7; }
   _inputHook && nix-instantiate --eval-only --json -E "
-    with import <nixpkgs> {};with builtins;
-    attrNames (import ./nixiform.nix (lib.importJSON $INPUT_CACHE))
+    with builtins;
+    attrNames (import ./nixiform.nix (fromJSON (readFile $INPUT_CACHE)))
   " | jq -r '.[]'
 }
 export -f _configs
@@ -148,13 +148,31 @@ _confPath() {
 }
 export -f _confPath
 
+_nixpkgsPath() {
+  local name="$1"
+  _checkInstance "$name"
+
+  [[ -f "./nixiform.nix" ]] \
+    || { echo >&2 "Error: No deploy file (nixiform.nix) found"; return 7; }
+
+  _inputHook && nix-instantiate --eval-only --json -E '
+    with builtins; let
+      input = import ./nixiform.nix (fromJSON (readFile '"$INPUT_CACHE"'));
+      node = input."'"$name"'";
+      path = if (isFunction node) then <nixpkgs> else node.nixpkgs;
+    in toString path
+  ' | jq -r .
+}
+export -f _nixpkgsPath
+
 _output() {
   local name="$1"
-  local confPath
+  local confPath nixpkgsPath
 
   confPath=$(_confPath "$name")
+  nixpkgsPath=$(_nixpkgsPath "$name")
   nix-instantiate --eval-only --strict --json -E "
-    with (import <nixpkgs/nixos> { configuration = $confPath;}).config;
+    with (import $nixpkgsPath/nixos {configuration = $confPath;}).config;
     ${*:2}
   "
 }
@@ -343,6 +361,9 @@ _initInstance() {
 { lib, ... }: with builtins; let
   input = lib.importJSON $INPUT_CACHE_NIX;
   node = input.nodes."$name";
+  nodeConf = (import ../nixiform.nix input)."$name";
+  nixpkgsPath = if (isFunction nodeConf) then <nixpkgs> else nodeConf.nixpkgs;
+  configuration = if (isFunction nodeConf) then nodeConf else nodeConf.configuration;
   hashDir = dir:
     mapAttrs (k: v: let p = "\${dir}/\${k}"; in
       if v == "regular" then hashFile "sha1" p
@@ -395,7 +416,7 @@ in {
     ($physicalNix)
 
     # Node specific config
-    (import ../nixiform.nix input)."$name"
+    configuration
   ];
   networking.hostName = "$name";
   services.openssh.enable = true;
@@ -411,15 +432,16 @@ export -f _initInstance
 _buildInstance() {
   local ecode=0
   local name="$1"
-  local confPath
+  local confPath nixpkgsPath
 
   confPath=$(_confPath "$name")
+  nixpkgsPath=$(_nixpkgsPath "$name")
 
   echo >&2 "Building config..."
 
   # Build config derivation
   # shellcheck disable=SC2086
-  nix-instantiate $NF_NIX_BUILD_OPTS '<nixpkgs/nixos>' \
+  nix-instantiate $NF_NIX_BUILD_OPTS "$nixpkgsPath/nixos" \
     -A system \
     --arg configuration "$confPath"
 }

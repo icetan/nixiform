@@ -13,7 +13,7 @@ makeConfiguration() {
   cat << EOF
 { ... }: {
   require = [
-    <nixpkgs/nixos/modules/profiles/qemu-guest.nix>
+    "\${nixpkgsPath}/nixos/modules/profiles/qemu-guest.nix"
   ];
   boot.loader.grub.device = "$grubdev";
   fileSystems."/" = { device = "$rootfsdev"; fsType = "ext4"; };

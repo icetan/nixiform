@@ -5,7 +5,7 @@ makeConfiguration() {
   cat << EOF
 { ... }: {
   require = [
-    <nixpkgs/nixos/modules/virtualisation/amazon-image.nix>
+    "\${nixpkgsPath}/nixos/modules/virtualisation/amazon-image.nix"
   ];
   ec2.hvm = true;
 }

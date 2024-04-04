@@ -20,7 +20,8 @@ makeConfiguration() {
 
   require = [
     #./hardware-configuration.nix
-    <nixpkgs/nixos/modules/profiles/qemu-guest.nix>
+    "\${nixpkgsPath}/nixos/modules/profiles/qemu-guest.nix"
+
     # ./network.nix
     ($(makeNetworkingConf))
   ];
