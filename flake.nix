@@ -8,15 +8,13 @@
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          nixiform = import ./. { inherit pkgs; };
-        in {
-          devShell = nixiform;
-          defaultPackage = nixiform;
-          packages.nixiform = nixiform;
-          defaultApp = {
-            type = "app";
-            program = "nixiform";
-          };
+        in
+        {
+          packages.nixiform = import ./. { inherit pkgs; };
+          packages.default = self.outputs.packages.${system}.nixiform;
+          devShells.default = self.outputs.packages.${system}.nixiform;
+          apps.nixiform = { type = "app"; program = "nixiform"; };
+          apps.default = self.outputs.apps.${system}.nixiform;
         }
       );
 }

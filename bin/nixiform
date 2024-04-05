@@ -180,14 +180,10 @@ export -f _output
 
 _caches() {
   local name="$1"
-  _output "$name" "with builtins;
-    if (nix?binaryCaches && nix?binaryCachePublicKeys)
-    then [
-      (concatStringsSep \" \" nix.binaryCaches)
-      (concatStringsSep \" \" nix.binaryCachePublicKeys)
-    ]
-    else []
-  "
+  _output "$name" 'with builtins; map (concatStringsSep " ") [
+    (nix.settings.substituters or nix.binaryCaches or [])
+    (nix.settings.trusted-public-keys or nix.binaryCachePublicKeys or [])
+  ]'
 }
 export -f _caches
 
