@@ -9,7 +9,7 @@ shopt -s inherit_errexit failglob
 #   4  config build failed
 #   5  not a valid config closure
 #   6  no input file found
-#   7  no deploy file (nixiform.nix) found
+#   7  no deploy file (terraflake.nix) found
 #   8  config push failed
 #   9  couldn't reach instance
 #  10  wrong arguments to CLI
@@ -17,16 +17,13 @@ shopt -s inherit_errexit failglob
 #  12  refuse to infect when dry push
 #  13  invalid option
 #  14  couldn't copy derivation closure to node
+#  15  couldn't get system of remote node
 #  100 instance needs reboot to complete
 
 BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
 export BIN_DIR
 LIB_DIR="${BIN_DIR%/*}/lib"
 export LIB_DIR
-INPUT_CACHE_NIX="./.input-cache.json"
-export INPUT_CACHE_NIX
-INPUT_CACHE="./.nixiform/.input-cache.json"
-export INPUT_CACHE
 SSH_OPTS="-o
 LogLevel=ERROR
 -o
@@ -37,21 +34,23 @@ StrictHostKeyChecking=no"
 $NF_SSH_OPTS"
 export SSH_OPTS
 
-NF_CONFIGURATOR_PATH="${NF_CONFIGURATOR_PATH-./.nixiform/configurators:$LIB_DIR/configurators}"
+NF_DIR="terraflake"
+export NF_DIR
+NF_CONFIGURATOR_PATH="${NF_CONFIGURATOR_PATH-./$NF_DIR/configurators:$LIB_DIR/configurators}"
 export NF_CONFIGURATOR_PATH
 NF_PAR="${NF_PAR-1}"
 export NF_PAR
 
 version() { tr -d '\n' < "$LIB_DIR"/version; }
+export -f version
 
 help() {
   cat >&2 <<EOF
-Usage: nixiform COMMAND [ARGS]
+Usage: terraflake COMMAND [ARGS]
 
 Commands:
 
   init   NAMES..          Create input from Terraform state
-  initFromJSON NAMES..    Create input from ./nixiform-input.json
   input  JSON_PATH        Print input data
   check  NAMES..          Check reachability of nodes
   build  NAMES..          Build configurations
@@ -70,13 +69,13 @@ Commands:
 Environment variables:
 
   NF_CONFIGURATOR_PATH    Where to look for provider configurators
-                          Default: ".nixiform/configurators"
+                            Default: "$NF_DIR/configurators"
   NF_NIX_BUILD_OPTS       Additional arguments to pass to \`nix-build\`
-                          Example: "--show-trace"
+                            Example: "--show-trace"
   NF_SSH_OPTS             Additional aguments to pass to \`ssh\`
-                          Example: "-i ~/.ssh/id_rsa"
+                            Example: "-i ~/.ssh/id_rsa"
   NF_PAR                  Set how many parallel process to launch
-                          Default: 1
+                            Default: 1
 
 Version: $(version)
 EOF
@@ -124,12 +123,7 @@ _instance() {
 export -f _instance
 
 _configs() {
-  [[ -f "./nixiform.nix" ]] \
-    || { echo >&2 "Error: No deploy file (nixiform.nix) found"; return 7; }
-  _inputHook && nix-instantiate --eval-only --json -E "
-    with builtins;
-    attrNames (import ./nixiform.nix (fromJSON (readFile $INPUT_CACHE)))
-  " | jq -r '.[]'
+  input | jq -r '.nodes | keys | .[]'
 }
 export -f _configs
 
@@ -140,7 +134,7 @@ _confPath() {
 
   _checkInstance "$name"
   provider=$(_instance "$name" provider)
-  path="./.nixiform/configuration-$provider-$name.nix"
+  path="./$NF_DIR/module-$name.nix"
 
   [[ -f $path ]] \
     || { echo >&2 "INFO: Not yet initialized"; _initInstance "$name" >/dev/null; }
@@ -148,39 +142,32 @@ _confPath() {
 }
 export -f _confPath
 
-_nixpkgsPath() {
-  local name="$1"
-  _checkInstance "$name"
-
-  [[ -f "./nixiform.nix" ]] \
-    || { echo >&2 "Error: No deploy file (nixiform.nix) found"; return 7; }
-
-  _inputHook && nix-instantiate --eval-only --json -E '
-    with builtins; let
-      input = import ./nixiform.nix (fromJSON (readFile '"$INPUT_CACHE"'));
-      node = input."'"$name"'";
-      path = if (isFunction node) then <nixpkgs> else node.nixpkgs;
-    in toString path
-  ' | jq -r .
+_system() {
+  nix eval --impure --raw --expr 'builtins.currentSystem'
 }
-export -f _nixpkgsPath
+export -f _system
+
+_remoteSystem() {
+  local ip="$1"
+  local system
+  # shellcheck disable=SC2016
+  system=$(_remote "$ip" sh -c 'true; echo "$(uname -m)-$(uname)"')
+  echo "${system,,}"
+}
+export -f _remoteSystem
 
 _output() {
   local name="$1"
-  local confPath nixpkgsPath
-
-  confPath=$(_confPath "$name")
-  nixpkgsPath=$(_nixpkgsPath "$name")
-  nix-instantiate --eval-only --strict --json -E "
-    with (import $nixpkgsPath/nixos {configuration = $confPath;}).config;
-    ${*:2}
-  "
+  local expr="${*:2}"
+  nix eval ".#nixosConfigurations.$name.config" \
+    --json --apply "$expr"
 }
 export -f _output
 
 _caches() {
   local name="$1"
-  _output "$name" 'with builtins; map (concatStringsSep " ") [
+  # shellcheck disable=SC2016
+  _output "$name" '{ nix, ... }: with builtins; map (concatStringsSep " ") [
     (nix.settings.substituters or nix.binaryCaches or [])
     (nix.settings.trusted-public-keys or nix.binaryCachePublicKeys or [])
   ]'
@@ -189,13 +176,14 @@ export -f _caches
 
 _secrets() {
   local name="$1"
-  _output "$name" "with builtins;
-    if nixiform?filesIn
-    then map (k: let i = nixiform.filesIn.\"\${k}\"; in
-        [ i.path nixiform.filesOut.\"\${k}\" i.chmod i.user i.group ]
-      ) (attrNames nixiform.filesIn)
+  # shellcheck disable=SC2016
+  _output "$name" '{ terraflake, ... }: with builtins;
+    if terraflake?filesIn
+    then map (k: let i = terraflake.filesIn.${k}; in
+        [ i.path terraflake.filesOut.${k} i.chmod i.user i.group ]
+      ) (attrNames terraflake.filesIn)
     else []
-  "
+  '
 }
 export -f _secrets
 
@@ -222,7 +210,7 @@ _pushSecrets() {
 
   ip=$(_instance "$name" ip)
   file=$(_secrets "$name" | jq -c '.[]')
-  dir=$(_output "$name" 'nixiform.filesDir' | jq -r .)
+  dir=$(_output "$name" '{ terraflake, ... }: terraflake.filesDir' | jq -r .)
   tmp=$(mktemp -d tmpsecret.XXXXX)
   rsec=$(_remote "$ip" sh -c "true
     mkdir -p \"$dir\"
@@ -346,25 +334,23 @@ _initInstance() {
 
   echo >&2 "Initializing config..."
 
-  # Aggrigate instance config with custom configs
-  mkdir -p .nixiform
+  # Aggregate instance config with custom configs
+  mkdir -p "$NF_DIR"
 
   # Get instance specific config
-  confPath="./.nixiform/configuration-$provider-$name.nix";
+  confPath="./$NF_DIR/module-$name.nix";
   physicalNix=$(_configure "$provider" "$ip")
+  remoteSystem=$(_remoteSystem "$ip")
 
-  _inputHook && cat > "$confPath" <<EOF
-{ lib, modulesPath, ... }: with builtins; let
-  input = lib.importJSON $INPUT_CACHE_NIX;
+  cat > "$confPath" <<EOF
+# DO NOT EDIT generated by 'terraflake init' (version: $(version))
+
+{ lib, modulesPath, pkgs, ... }: with builtins; let
+  input = lib.importJSON (pkgs.callPackage ./terraform-local.nix {
+    terraflake-terraform-state = ../terraform.tfstate;
+  });
   node = input.nodes."$name";
-  nodeConf = (import ../nixiform.nix input)."$name";
-  nodeConf' = if (isFunction nodeConf) then {
-    modulesPath = "\${<nixpkgs>}/nixos/modules";
-    configuration = nodeConf;
-  } else {
-    inherit (nodeConf) configuration;
-    modulesPath = "\${nodeConf.nixpkgs}/nixos/modules";
-  };
+  nodeConf'.modulesPath = modulesPath;
   hashDir = dir:
     mapAttrs (k: v: let p = "\${dir}/\${k}"; in
       if v == "regular" then hashFile "sha1" p
@@ -376,11 +362,24 @@ _initInstance() {
     then hashString "sha1" (toJSON (hashDir p))
     else hashFile "sha1" p;
 in {
-  _module.args = { inherit input node; };
+  # _module.args = { inherit input node; };
   imports = [
     # Secrets module
     ({ lib, config, ... }: with lib; {
-      options.nixiform.filesIn = mkOption {
+      options.terraflake.system = mkOption {
+        description = "Remote system.";
+        type = types.str;
+      };
+      options.terraflake.input = mkOption {
+        description = "Data passed from provisioner.";
+        type = with types; submodule { options = {
+          meta = mkOption { type = attrs; };
+          nodes = mkOption { type = attrs; };
+          node = mkOption { type = attrs; };
+        }; };
+        default = { meta = {}; nodes = {}; node = {}; };
+      };
+      options.terraflake.filesIn = mkOption {
         description = "Attrset of paths to local files, name -> local path.";
         type = with types; attrsOf (submodule { options = {
           path = mkOption { type = path; };
@@ -391,38 +390,44 @@ in {
         };});
         default = {};
       };
-      options.nixiform.filesDir = mkOption {
+      options.terraflake.filesDir = mkOption {
         description = "Remote directory path to upload files to.";
         type = types.str;
         default = "/var/lib/nf-keys";
       };
-      options.nixiform.filesOut = mkOption {
+      options.terraflake.filesOut = mkOption {
         description = "Attrset of paths to remote files, name -> server path.";
         type = with types; attrsOf str;
         default = {};
       };
-      config.nixiform.filesOut = mapAttrs (k: v: config.nixiform.filesDir+"/"+(hash v.path)) config.nixiform.filesIn;
+      config.terraflake.input = input // { inherit node; };
+      config.terraflake.filesOut = mapAttrs (k: v: config.terraflake.filesDir+"/"+(hash v.path)) config.terraflake.filesIn;
       config.system.activationScripts.nf-keys-permissons = concatMapStrings
         (k: let
-          i = config.nixiform.filesIn."\${k}";
-          o = config.nixiform.filesOut."\${k}";
+          i = config.terraflake.filesIn."\${k}";
+          o = config.terraflake.filesOut."\${k}";
         in ''
           chown -R "\${i.user}:\${i.group}" "\${o}"
           \${concatMapStringsSep "\\n" (ln: "ln -sfT '\${o}' '\${ln}'") i.links}
         '')
-        (attrNames config.nixiform.filesIn);
+        (attrNames config.terraflake.filesIn);
     })
 
     # Hardware config gernerated by configurator: $provider
     ($physicalNix)
+    ({ ... }: { terraflake.system = "$remoteSystem"; })
 
     # Node specific config
-    nodeConf'.configuration
+    # nodeConf'.configuration
   ];
   networking.hostName = "$name";
   services.openssh.enable = true;
   users.users.root.openssh.authorizedKeys.keys = [node.ssh_key];
   #system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
+  # FIXME: this is because terraform is unfree, maybe get it with getFlake method instead?
+  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
+    "terraform"
+  ];
 }
 EOF
 
@@ -433,18 +438,14 @@ export -f _initInstance
 _buildInstance() {
   local ecode=0
   local name="$1"
-  local confPath nixpkgsPath
-
-  confPath=$(_confPath "$name")
-  nixpkgsPath=$(_nixpkgsPath "$name")
+  # local remoteSystem
+  # remoteSystem=$(_output "$name" '{ terraflake, ... }: terraflake.system')
 
   echo >&2 "Building config..."
 
-  # Build config derivation
   # shellcheck disable=SC2086
-  nix-instantiate $NF_NIX_BUILD_OPTS "$nixpkgsPath/nixos" \
-    -A system \
-    --arg configuration "$confPath"
+  nix build $NF_NIX_BUILD_OPTS --print-out-paths \
+    ".#nixosConfigurations.$name.config.system.build.toplevel"
 }
 export -f _buildInstance
 
@@ -598,41 +599,34 @@ _init() {
   _par '_initInstance "$1" 2> >(_ilog "$1")' <<<"$instances"
 }
 
-_inputHook() {
-  [[ -f "$INPUT_CACHE" ]] || {
-    [[ -x ./.nixiform/input-hook ]] \
-      || { echo >&2 "Error: Couldn't find an executable input hook, try running: nixiform init"; return 6; }
-    ./.nixiform/input-hook > "$INPUT_CACHE"
-  }
-}
-export -f _inputHook
-
 # CLI commands
 
 init() {
-  mkdir -p .nixiform
-  cp "$LIB_DIR"/input-hooks/default .nixiform/input-hook
-  chmod u+wx .nixiform/input-hook
-  _init "$@"
-}
-
-# TODO: clean up and move hook script to lib/input-hooks/
-initFromJSON() {
-  [[ -f ./nixiform-input.json ]] \
-    || { echo >&2 "Error: Couldn't find input JSON at $PWD/nixiform-input.json"; return 6; }
-  mkdir -p .nixiform
-  cat > .nixiform/input-hook <<EOF
-#!/usr/bin/env bash
-cat ./nixiform-input.json
-EOF
-  chmod +x .nixiform/input-hook
+  mkdir -p "$NF_DIR"
+  # Setup provisioner interfaces:
+  # TODO: generalize to support multiple interfaces (eg. static JSON file, terraform cloud)
+  cp --no-preserve=all "$LIB_DIR"/provisioners/terraform-local.nix "$NF_DIR/terraform-local.nix"
   _init "$@"
 }
 
 # shellcheck disable=SC2120
 input() {
-  _inputHook
-  jq -rM ".$1 // \"\"" "$INPUT_CACHE"
+  local drv
+  drv=$(nix-build -E "
+    with builtins; let
+      flake = getFlake (toString ./.);
+      pkgs = import flake.inputs.nixiform.inputs.nixpkgs {
+        system = currentSystem;
+        config.allowUnfree = true;
+      };
+    in
+    pkgs.callPackage ./$NF_DIR/terraform-local.nix {
+      terraflake-terraform-state = ./terraform.tfstate;
+    }
+  ")
+  nix-instantiate --eval-only --json -E "
+    with builtins; fromJSON (readFile $drv)
+  " | jq -rM ".${1#.} // \"\""
 }
 export -f input
 
@@ -715,7 +709,7 @@ diff() {
   buildOutput=$(build "${names[@]}")
   while read -r name path; do
     ip=$(_instance "$name" ip)
-    rpath=$(_remote "$ip" nix-store -qd /nix/var/nix/profiles/system </dev/null)
+    rpath=$(_remote "$ip" nix-store -q /nix/var/nix/profiles/system </dev/null)
 
     NIX_SSHOPTS="${opts[*]}" \
       nix-copy-closure -s --from root@"$ip" "$rpath" \
@@ -748,7 +742,6 @@ trap 'ecode=$?;trap - EXIT
   else
     echo >&2 "Failed($ecode)!"
   fi
-  rm -f "$INPUT_CACHE"
 ' EXIT
 trap 'trap - TERM; kill $$' TERM
 

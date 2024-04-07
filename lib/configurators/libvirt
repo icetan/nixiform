@@ -10,8 +10,8 @@ makeConfiguration() {
 
   cat << EOF
 { ... }: {
-  require = [
-    "\${nixpkgsPath}/nixos/modules/profiles/qemu-guest.nix"
+  imports = [
+    "\${nodeConf'.modulesPath}/profiles/qemu-guest.nix"
   ];
   boot.loader.grub.device = "/dev/$disk";
   fileSystems."/" = { device = "/dev/${disk}1"; fsType = "ext4"; };

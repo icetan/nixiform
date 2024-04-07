@@ -4,8 +4,8 @@ set -eo pipefail
 makeConfiguration() {
   cat << EOF
 { ... }: {
-  require = [
-    "\${nixpkgsPath}/nixos/modules/virtualisation/amazon-image.nix"
+  imports = [
+    "\${nodeConf'.modulesPath}/virtualisation/amazon-image.nix"
   ];
   ec2.hvm = true;
 }

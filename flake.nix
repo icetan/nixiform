@@ -15,6 +15,7 @@
           devShells.default = self.outputs.packages.${system}.nixiform;
           apps.nixiform = { type = "app"; program = "nixiform"; };
           apps.default = self.outputs.apps.${system}.nixiform;
+          apps.terraflake = { type = "app"; program = "terraflake"; };
         }
       );
 }

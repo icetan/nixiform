@@ -18,9 +18,9 @@ makeConfiguration() {
   boot.loader.grub.device = "/dev/$disk";
   fileSystems."/" = { device = "/dev/${disk}1"; fsType = "ext4"; };
 
-  require = [
+  imports = [
     #./hardware-configuration.nix
-    "\${nixpkgsPath}/nixos/modules/profiles/qemu-guest.nix"
+    "\${nodeConf'.modulesPath}/profiles/qemu-guest.nix"
 
     # ./network.nix
     ($(makeNetworkingConf))
