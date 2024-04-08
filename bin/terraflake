@@ -36,10 +36,15 @@ export SSH_OPTS
 
 NF_DIR="terraflake"
 export NF_DIR
+NF_FLAKE="${NF_FLAKE:-.}"
+export NF_FLAKE
 NF_CONFIGURATOR_PATH="${NF_CONFIGURATOR_PATH-./$NF_DIR/configurators:$LIB_DIR/configurators}"
 export NF_CONFIGURATOR_PATH
 NF_PAR="${NF_PAR-1}"
 export NF_PAR
+
+SSH_EXEC=$(which ssh)
+export SSH_EXEC
 
 version() { tr -d '\n' < "$LIB_DIR"/version; }
 export -f version
@@ -51,7 +56,7 @@ Usage: terraflake COMMAND [ARGS]
 Commands:
 
   init   NAMES..          Create input from Terraform state
-  input  JSON_PATH        Print input data
+  input  JSON_PATH        Print input data (e.g. "nodes[].ip")
   check  NAMES..          Check reachability of nodes
   build  NAMES..          Build configurations
   push   OPTIONS NAMES..  Push configurations to nodes
@@ -63,11 +68,15 @@ Commands:
     -d|--dry              Check but don't copy
     -f|--force            Force copy
   diff   NAMES..          Show diff of local and remote configuration
-  output NAME NIX_EXPR    Print NixOS config using a Nix expression, e.g. \`nix.binaryCaches\`
+  output NAME NIX_EXPR    Print NixOS config using a Nix expression, e.g. \`nix.settings\`
+  ssh NAME                SSH to node (sugar for \`ssh root@\$(terraflake input ".nodes.<NAME>.ip")\`)
+  nodes                   List node names (sugar for \`terraflake input ".nodes | keys | .[]"\`)
   help                    This message
 
 Environment variables:
 
+  NF_FLAKE                Flake reference to evaluate (e.g. github:icetan/terraflake-example)
+                            Default: .
   NF_CONFIGURATOR_PATH    Where to look for provider configurators
                             Default: "$NF_DIR/configurators"
   NF_NIX_BUILD_OPTS       Additional arguments to pass to \`nix-build\`
@@ -95,7 +104,7 @@ export -f _par
 _remote() {
   mapfile -t opts <<<"$SSH_OPTS"
   # shellcheck disable=SC2086 disable=SC2029
-  ssh "${opts[@]}" root@"$1" "${@:2}"
+  $SSH_EXEC "${opts[@]}" root@"$1" "${@:2}"
 }
 export -f _remote
 
@@ -159,7 +168,7 @@ export -f _remoteSystem
 _output() {
   local name="$1"
   local expr="${*:2}"
-  nix eval ".#nixosConfigurations.$name.config" \
+  nix eval "$NF_FLAKE#nixosConfigurations.$name.config" \
     --json --apply "$expr"
 }
 export -f _output
@@ -204,7 +213,10 @@ _pushSecrets() {
     -d|--dry) dry=1;;
     -f|--force) force=1;;
     -*) true;;
-    *) if [[ -z "$name" ]]; then name="$1"; fi
+    *)
+      if [[ -z "$name" ]]; then name="$1"
+      # else { echo >&2 "Too many arguments given to build command"; return 13; }
+      fi
       ;;
   esac; shift; done
 
@@ -281,11 +293,10 @@ export -f _checkInstance
 
 _checkInstances() {
   local names
-  local names_
 
   if [ -n "$*" ]
     then names=("$@")
-    else names_=$(_configs); mapfile -t names < <(echo "$names_")
+    else mapfile -t names < <(_configs)
   fi
   for name in "${names[@]}"; do
     _checkInstance "${name}"
@@ -438,14 +449,12 @@ export -f _initInstance
 _buildInstance() {
   local ecode=0
   local name="$1"
-  # local remoteSystem
-  # remoteSystem=$(_output "$name" '{ terraflake, ... }: terraflake.system')
 
   echo >&2 "Building config..."
 
   # shellcheck disable=SC2086
   nix build $NF_NIX_BUILD_OPTS --print-out-paths \
-    ".#nixosConfigurations.$name.config.system.build.toplevel"
+    "$NF_FLAKE#nixosConfigurations.$name.config.system.build.toplevel"
 }
 export -f _buildInstance
 
@@ -463,7 +472,7 @@ _pushInstance() {
     -b|--bundle) bundleDerivations=1;;
     -d|--dry) op="dry-activate";;
     -r|--auto-reboot) forceReboot=1;;
-    -*) echo >&2 "Not a recognized push option '$1'"; return 13;;
+    -*) true;; #echo >&2 "Not a recognized push option '$1'"; return 13;;
     *)
       if [ -z "$name" ]; then name="$1"
       elif [ -z "$path" ]; then path="$1"
@@ -576,10 +585,8 @@ _pushAll() {
   while [[ -n "$1" ]]; do case "$1" in
     -*) flags+=("$1");;
     *)
-      if [[ -z "$name" ]]; then
-        name="$1"
-      elif [[ -z "$path" ]]; then
-        path="$1"
+      if [[ -z "$name" ]]; then name="$1"
+      elif [[ -z "$path" ]]; then path="$1"
       fi;;
   esac; shift; done
 
@@ -639,7 +646,7 @@ output() {
   [[ -n "${exprs[*]}" ]] \
     || _usage "Missing Nix expression as second argument"
 
-  _output "$name" "${exprs[@]}" \
+  _output "$name" "{ ... }@config: with config; ${exprs[*]}" \
     2> >(_ilog "$1") \
     | jq -rM .
 }
@@ -656,19 +663,23 @@ check() {
 }
 
 build() {
-  local path
-  local instances
+  local path instances names flags
 
-  instances=$(_checkInstances "$@")
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
+    *) names+=("$1");;
+  esac; shift; done
+
+  instances=$(_checkInstances "${names[@]}")
 
   # shellcheck disable=SC2016
   _par '
-    { path=$(_buildInstance "$1") || {
+    { path=$(_buildInstance "$@") || {
         echo >&2 "Error: Failed to build config"; exit 4
       }
     } 2> >(_ilog "$1")
     echo "$1" "$path"
-  ' <<<"$instances" \
+  ' "${flags[@]}" <<<"$instances" \
     || { ecode=$?;echo >&2 "Error: Couldn't build all instances"; return $ecode; }
 }
 
@@ -729,11 +740,23 @@ secret() {
     *) names+=("$1");;
   esac; shift; done
 
-
   instances=$(_checkInstances "${names[@]}")
 
   # shellcheck disable=SC2016
   _par '_pushSecrets "$@" 2> >(_ilog "${@:$#}")' "${flags[@]}" <<<"$instances"
+}
+
+nodes() {
+  _configs
+}
+
+ssh() {
+  local name="$1"
+
+  [[ -n "$name" ]] \
+    || _usage "Missing instance name"
+
+  $SSH_EXEC "root@$(input | jq -r ".nodes.\"$name\".ip")" "${@:2}"
 }
 
 trap 'ecode=$?;trap - EXIT

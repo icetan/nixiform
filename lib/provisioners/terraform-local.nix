@@ -6,8 +6,8 @@ runCommand "terraflake-terraform-local-output"
   buildInputs = [ terraform jq ];
 }
   ''
-    ln -s "${terraflake-terraform-state}" terraform.tfstate
-    terraform output -json | jq > $out -rM '
+    terraform output -json -state="${terraflake-terraform-state}" \
+    | jq > $out -rM '
     {
       meta: (to_entries
         | map(select(.key | test("^terraflake$") | not))
