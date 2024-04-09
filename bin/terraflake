@@ -102,10 +102,10 @@ _par() {
 }
 export -f _par
 
-_isgit() {
-  git rev-parse >&2 2>/dev/null
+_git_root() {
+  git rev-parse --show-toplevel 2>/dev/null
 }
-export -f _isgit
+export -f _git_root
 
 _remote() {
   mapfile -t opts <<<"$SSH_OPTS"
@@ -450,7 +450,7 @@ in {
   ];
 }
 EOF
-  if _isgit; then git add -N "$confPath"; fi
+  if _git_root >/dev/null; then git add -N "$confPath"; fi
   echo "$name" "$confPath"
 }
 export -f _initInstance
@@ -629,11 +629,21 @@ _init() {
 
 init() {
   local provisioner_file="$NF_DIR/terraform-local.nix"
+  local git_root; git_root=$(_git_root || true)
+  local terraform_state_file="$git_root/terraform.tfstate"
+
   mkdir -p "$NF_DIR"
   # Setup provisioner interfaces:
   # TODO: generalize to support multiple interfaces (eg. static JSON file, terraform cloud)
   cp --no-preserve=all "$LIB_DIR"/provisioners/terraform-local.nix "$provisioner_file"
-  if _isgit; then git add -N "$provisioner_file"; fi
+
+  if [[ -n "$git_root" ]]; then
+    git add -N "$provisioner_file"
+    if [[ -f "$terraform_state_file" ]]; then
+      git add -N "$terraform_state_file"
+    fi
+  fi
+
   _init "$@"
 }
 
