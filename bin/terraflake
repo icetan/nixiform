@@ -645,13 +645,6 @@ _initSetup() {
 
   input_file_name=$(_terraflakeConfig ".provisioner" || echo "opentofu-local")
 
-  # if [[ -f "terraflake.nix" ]]; then
-  #   # shellcheck disable=SC2086
-  #   input_file_name=$(nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json --apply --raw --expr "
-  #     (import $(_flake_source)/terraflake.nix).provisioner or \"$input_file_name\"
-  #   ")
-  # fi
-
   input_file=$(_searchPath "$NF_PROVISIONER_PATH" "${input_file_name}.nix") || {
     echo >&2 "Error: '$input_file_name' is not a valid provisioner."
     exit 17
@@ -661,7 +654,9 @@ _initSetup() {
   cp --no-preserve=all "$input_file" "$NF_INPUT_DEST"
 
   _git_add "$NF_INPUT_DEST"
-  if [[ "$input_file_name" = "terraform-local" ]]; then
+  if [[ "$input_file_name" = "terraform-local" ]] \
+  || [[ "$input_file_name" = "opentofu-local" ]]
+  then
     _git_add "terraform.tfstate"
   fi
 
