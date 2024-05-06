@@ -64,7 +64,7 @@ Usage: terraflake COMMAND [ARGS]
 
 Commands:
 
-  init   NAMES..          Create input from Terraform state
+  init   NAMES..          Create input from Terraform/Opentofu state
   input  JSON_PATH        Print input data (e.g. "nodes[].ip")
   check  NAMES..          Check reachability of nodes
   build  NAMES..          Build configurations
@@ -112,6 +112,11 @@ _par() {
 }
 export -f _par
 
+_flake_source() {
+  nix 2>/dev/null flake metadata --json | jq -r .path
+}
+export -f _flake_source
+
 _git_root() {
   git rev-parse --show-toplevel 2>/dev/null
 }
@@ -146,6 +151,14 @@ _infect() {
   _remote "$1" bash /dev/stdin "${@:2}" < "$LIB_DIR"/infect
 }
 export -f _infect
+
+
+_terraflakeConfig() {
+  local path="$1"
+  # shellcheck disable=SC2086
+  nix 2>/dev/null eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json | jq -r "$path"
+}
+export -f _terraflakeConfig
 
 _configure() {
   local path
@@ -452,10 +465,6 @@ in {
   services.openssh.enable = true;
   users.users.root.openssh.authorizedKeys.keys = [node.ssh_key];
   #system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
-  # FIXME: this is because terraform is unfree, maybe get it with getFlake method instead?
-  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
-    "terraform"
-  ];
 }
 EOF
   _git_add "$confPath"
@@ -632,15 +641,16 @@ export -f _pushAll
 # CLI commands
 
 _initSetup() {
-  local input_file instances
-  local input_file_name="terraform-local"
+  local input_file instances input_file_name
 
-  if [[ -f "terraflake.nix" ]]; then
-    # shellcheck disable=SC2086
-    input_file_name=$(nix eval $NF_NIX_EVAL_OPTS --raw --expr "
-      (import ./terraflake.nix).provisioner or \"$input_file_name\"
-    ")
-  fi
+  input_file_name=$(_terraflakeConfig ".provisioner" || echo "opentofu-local")
+
+  # if [[ -f "terraflake.nix" ]]; then
+  #   # shellcheck disable=SC2086
+  #   input_file_name=$(nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json --apply --raw --expr "
+  #     (import $(_flake_source)/terraflake.nix).provisioner or \"$input_file_name\"
+  #   ")
+  # fi
 
   input_file=$(_searchPath "$NF_PROVISIONER_PATH" "${input_file_name}.nix") || {
     echo >&2 "Error: '$input_file_name' is not a valid provisioner."
@@ -680,12 +690,11 @@ init() {
 }
 
 _input() {
-  local path; path=$(nix 2>/dev/null flake metadata --json | jq -r .path)
   # shellcheck disable=SC2086
   nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.pkgs" --json --apply "
     with builtins;
     pkgs: let
-      config = import $path/$NF_INPUT_DEST { inherit pkgs; };
+      config = import $(_flake_source)/$NF_INPUT_DEST { inherit pkgs; };
     in
     config.terraflake.input
   " \
