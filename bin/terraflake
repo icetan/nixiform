@@ -187,10 +187,10 @@ _confPath() {
   provider=$(_instance "$name" provider)
   path="./$NF_DIR/module-$name.nix"
 
-  [[ -f $path ]] || {
+  if [[ ! -f $path ]]; then
     echo >&2 "Info: Not yet initialized"
     _initInstance "$name" >/dev/null
-  }
+  fi
   printf %s "$path"
 }
 export -f _confPath
@@ -475,17 +475,16 @@ export -f _initInstance
 _buildInstance() {
   local ecode=0
   local name="$1"
-  local confPath; confPath=$(_confPath "$name")
 
-  if [[ ! -f "$confPath" ]]; then
-    _initInstance "$name" >/dev/null
-  fi
+  # Make sure config is instantiated
+  _confPath "$name" >/dev/null
 
   echo >&2 "Building config..."
 
   # shellcheck disable=SC2086
-  nix build $NF_NIX_BUILD_OPTS --print-out-paths \
-    "$NF_FLAKE#nixosConfigurations.$name.config.system.build.toplevel"
+  nix derivation show $NF_NIX_BUILD_OPTS \
+    "$NF_FLAKE#nixosConfigurations.$name.config.system.build.toplevel" \
+    | jq -r 'keys|.[0]'
 }
 export -f _buildInstance
 
@@ -786,12 +785,7 @@ push() {
 }
 
 diff() {
-  local name
-  local path
-  local rpath
-  local buildOutput
-  local names
-  local ip
+  local name path rpath lpath buildOutput names ip caches
 
   while [[ -n "$1" ]]; do case "$1" in
     -*) echo >&2 "Not a recognized diff option: $1"; return 13;;
@@ -802,13 +796,21 @@ diff() {
 
   buildOutput=$(build "${names[@]}")
   while read -r name path; do
+    mapfile -t caches < <(_caches "$name" | jq -r '.[]')
+    lpath=$(
+      # Then new way?
+      # nix build --print-out-paths -L "$path^out" \
+      nix-store -r "$path" \
+      --option substituters "${caches[0]}" \
+      --option trusted-public-keys "${caches[1]}"
+    )
     ip=$(_instance "$name" ip)
     rpath=$(_remote "$ip" nix-store -q /nix/var/nix/profiles/system </dev/null)
 
     NIX_SSHOPTS="${opts[*]}" \
       nix-copy-closure -s --from root@"$ip" "$rpath" \
 
-    nix-diff "$rpath" "$path" \
+    nix-diff "$rpath" "$lpath" \
       2> >(_ilog "$name")
   done <<<"$buildOutput"
 }
