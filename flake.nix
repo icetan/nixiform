@@ -12,6 +12,7 @@
         {
           packages.nixiform = import ./. { inherit pkgs; };
           packages.default = self.outputs.packages.${system}.nixiform;
+          packages.terraflake = self.outputs.packages.${system}.nixiform;
           devShells.default = self.outputs.packages.${system}.nixiform;
           apps.nixiform = { type = "app"; program = "nixiform"; };
           apps.default = self.outputs.apps.${system}.nixiform;
