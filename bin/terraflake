@@ -50,6 +50,8 @@ NF_PROVISIONER_PATH="${NF_PROVISIONER_PATH-$NF_DIR/provisioners:$LIB_DIR/provisi
 export NF_PROVISIONER_PATH
 NF_PAR="${NF_PAR-1}"
 export NF_PAR
+NF_SSH_USER="${NF_SSH_USER:-root}"
+export NF_SSH_USER
 
 SSH_EXEC=$(which ssh)
 export SSH_EXEC
@@ -77,7 +79,7 @@ Commands:
     -f|--force            Force copy
   diff   NAMES..          Show diff of local and remote configuration
   output NAME NIX_EXPR    Print NixOS config using a Nix expression, e.g. \`nix.settings\`
-  ssh NAME                SSH to node (sugar for \`ssh root@\$(terraflake input ".nodes.<NAME>.ip")\`)
+  ssh NAME                SSH to node (sugar for \`ssh $NF_SSH_USER@\$(terraflake input ".nodes.<NAME>.ip")\`)
   nodes                   List node names (sugar for \`terraflake input ".nodes | keys | .[]"\`)
   help                    This message
 
@@ -91,6 +93,8 @@ Environment variables:
                             Example: "--show-trace"
   NF_SSH_OPTS             Additional aguments to pass to \`ssh\`
                             Example: "-i ~/.ssh/id_rsa"
+  NF_SSH_USER             Which ssh user to login with
+                            Default: root
   NF_PAR                  Set how many parallel process to launch
                             Default: 1
 
@@ -135,7 +139,7 @@ export -f _git_add
 _remote() {
   mapfile -t opts <<<"$SSH_OPTS"
   # shellcheck disable=SC2086 disable=SC2029
-  $SSH_EXEC "${opts[@]}" root@"$1" "${@:2}"
+  $SSH_EXEC "${opts[@]}" "$NF_SSH_USER@$1" "${@:2}"
 }
 export -f _remote
 
@@ -369,15 +373,15 @@ _initInstance() {
 export PROVIDER="$provider"
 export NIX_CHANNEL=nixos-23.05
 export NO_REBOOT=1
-curl https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | bash 2>&1 | tee /tmp/infect.log
-ln -fs /root/.nix-profile/bin/nix-store /usr/bin/nix-store
+curl https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | sudo bash 2>&1 | sudo tee ./infect.log
+sudo ln -fs /root/.nix-profile/bin/nix-store /usr/bin/nix-store
 EOF
   }
 
   nixNetworking=$(_remote "$ip" cat /etc/nixos/networking.nix) || true
   nixHardware=$(_remote "$ip" cat /etc/nixos/hardware-configuration.nix) || true
 
-  [[ -n "$nixNetworking" && -n "$nixHardware" ]] || {
+  [[ -n "$nixHardware" ]] || {
     echo >&2 "Error: Could not re-initialize instance make sure the server has configuration files /etc/nixos/networking.nix and /etc/nixos/hardware-configuration.nix"
     exit 18
   }
@@ -452,7 +456,7 @@ in {
     })
 
     # Hardware config gernerated by nixos-infect: $provider
-    ($nixNetworking)
+    ${nixNetworking:+($nixNetworking)}
     ($nixHardware)
     ({ ... }: { terraflake.system = "$remoteSystem"; })
 
@@ -532,7 +536,7 @@ _pushInstance() {
     ) || { echo >&2 "Error: Failed to realize derivation locally: $path"; return 11; }
     echo >&2 "Copying NixOS closure to remote host"
     NIX_SSHOPTS="${opts[*]}" \
-      nix-copy-closure -s --to root@"$ip" "$path" \
+      nix-copy-closure -s --to "$NF_SSH_USER@$ip" "$path" \
       || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
   else
     if [[ -n $bundleDerivations ]]; then
@@ -544,7 +548,7 @@ _pushInstance() {
     else
       echo >&2 "Copying NixOS config derivation to remote host"
       NIX_SSHOPTS="${opts[*]}" \
-        nix-copy-closure -s --to root@"$ip" "$path" \
+        nix-copy-closure -s --to "$NF_SSH_USER@$ip" "$path" \
         || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
     fi
     echo >&2 "Realizing NixOS config on remote host"
@@ -787,7 +791,7 @@ diff() {
     rpath=$(_remote "$ip" nix-store -q /nix/var/nix/profiles/system </dev/null)
 
     NIX_SSHOPTS="${opts[*]}" \
-      nix-copy-closure -s --from root@"$ip" "$rpath" \
+      nix-copy-closure -s --from "$NF_SSH_USER@$ip" "$rpath" \
 
     nix-diff "$rpath" "$lpath" \
       2> >(_ilog "$name")
@@ -820,7 +824,7 @@ ssh() {
   [[ -n "$name" ]] \
     || _usage "Missing instance name"
 
-  $SSH_EXEC "root@$(_input | jq -r ".nodes.\"$name\".ip")" "${@:2}"
+  $SSH_EXEC "$NF_SSH_USER@$(_input | jq -r ".nodes.\"$name\".ip")" "${@:2}"
 }
 
 # trap 'ecode=$?;trap - EXIT
