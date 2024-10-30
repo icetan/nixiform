@@ -1,0 +1,900 @@
+#!/usr/bin/env bash
+set -eo pipefail
+shopt -s inherit_errexit failglob
+
+# Exit codes:
+#   1  no instance with name
+#   2  no config with name
+#   4  config build failed
+#   5  not a valid config closure
+#   6  no input file found
+#   7  no deploy file (tonix.nix) found
+#   8  config push failed
+#   9  couldn't reach instance
+#  10  wrong arguments to CLI
+#  11  couldn't copy closure to node
+#  12  refuse to infect when dry push
+#  13  invalid option
+#  14  couldn't copy derivation closure to node
+#  15  couldn't get system of remote node
+#  16  invalid provisioner
+#  100 instance needs reboot to complete
+#  101 instance not reachable after infect
+#  17  host not infected
+#  18  could not re-init, missing infect configs in /etc/nixos
+
+BIN_DIR=$(cd "${BASH_SOURCE[0]%/*}"; pwd)
+export BIN_DIR
+LIB_DIR="${BIN_DIR%/*}/lib"
+export LIB_DIR
+SSH_OPTS="-o
+LogLevel=ERROR
+-o
+UserKnownHostsFile=/dev/null
+-o
+StrictHostKeyChecking=no"
+[[ -z $NF_SSH_OPTS ]] || SSH_OPTS+="
+$NF_SSH_OPTS"
+export SSH_OPTS
+
+NF_DIR="./tonix"
+export NF_DIR
+NF_INPUT_DEST="$NF_DIR/.input.nix"
+export NF_INPUT_DEST
+NF_FLAKE="${NF_FLAKE:-.}"
+export NF_FLAKE
+NF_SYSTEM="${NF_SYSTEM:-$(echo "$(uname -m)-$(uname)")}"
+NF_SYSTEM="${NF_SYSTEM,,}"
+export NF_SYSTEM
+NF_PROVISIONER_PATH="${NF_PROVISIONER_PATH-$NF_DIR/provisioners:$LIB_DIR/provisioners}"
+export NF_PROVISIONER_PATH
+NF_PAR="${NF_PAR-1}"
+export NF_PAR
+NF_SSH_USER="${NF_SSH_USER:-root}"
+export NF_SSH_USER
+
+SSH_EXEC=$(which ssh)
+export SSH_EXEC
+
+version() { tr -d '\n' < "$LIB_DIR"/tonix-version; }
+export -f version
+
+help() {
+  cat >&2 <<EOF
+Usage: tonix COMMAND [ARGS]
+
+Commands:
+
+  init   NAMES..          Create input from Terraform/Opentofu state
+  input  JSON_PATH        Print input data (e.g. "nodes[].ip")
+  check  NAMES..          Check reachability of nodes
+  build  NAMES..          Build configurations
+  push   OPTIONS NAMES..  Push configurations to nodes
+    -l|--local            Realize derivation locally
+    -b|--bundle           Bundle derivations
+    -d|--dry              Upload closure but do not switch to configuration
+    -r|--auto-reboot      Reboot instance if needed (default is to fail instead)
+  secret NAMES..          Copy secrets to remote nodes
+    -d|--dry              Check but don't copy
+    -f|--force            Force copy
+  diff   NAMES..          Show diff of local and remote configuration
+  output NAME NIX_EXPR    Print NixOS config using a Nix expression, e.g. \`nix.settings\`
+  ssh NAME                SSH to node (sugar for \`ssh $NF_SSH_USER@\$(tonix input ".nodes.<NAME>.ip")\`)
+  nodes                   List node names (sugar for \`tonix input ".nodes | keys | .[]"\`)
+  help                    This message
+
+Environment variables:
+
+  NF_FLAKE                Flake reference to evaluate (e.g. github:icetan/terraflake-example)
+                            Default: .
+  NF_NIX_BUILD_OPTS       Additional arguments to pass to \`nix build\`
+                            Example: "--show-trace"
+  NF_NIX_EVAL_OPTS        Additional arguments to pass to \`nix-instantiate\`
+                            Example: "--show-trace"
+  NF_SSH_OPTS             Additional aguments to pass to \`ssh\`
+                            Example: "-i ~/.ssh/id_rsa"
+  NF_SSH_USER             Which ssh user to login with
+                            Default: root
+  NF_PAR                  Set how many parallel process to launch
+                            Default: 1
+
+Version: $(version)
+EOF
+}
+
+_usage() { printf >&2 "Error: %s\n\n" "$*"; help; exit 10; }
+
+_ilog() { sed "s|^|$1> |" >&2; }
+export -f _ilog
+
+_par() {
+  # shellcheck disable=SC2030
+  xargs -L1 -P"$NF_PAR" bash -c "set -eo pipefail;shopt -s inherit_errexit failglob; $([[ -z $NF_DEBUG ]] || echo set -x\;) $1" _ "${@:2}"
+}
+export -f _par
+
+# _flake_source() {
+#   nix 2>/dev/null flake metadata --json | jq -r .path
+# }
+# export -f _flake_source
+
+_git_root() {
+  git rev-parse --show-toplevel 2>/dev/null
+}
+export -f _git_root
+
+_git_add() {
+  if _git_root >/dev/null; then
+    for file in "$@"; do
+      if [[ -f "$file" ]]; then
+        for i in {1..3}; do
+          { git add -N "$file" && break; } || sleep 1
+        done
+      fi
+    done
+  fi
+}
+export -f _git_add
+
+_remote() {
+  mapfile -t opts <<<"$SSH_OPTS"
+  # shellcheck disable=SC2086 disable=SC2029
+  $SSH_EXEC "${opts[@]}" "$NF_SSH_USER@$1" "${@:2}"
+}
+export -f _remote
+
+_searchPath() {
+  PATH="$1" command -v "${2:-default}"
+}
+export -f _searchPath
+
+_switch() {
+  _remote "$1" bash /dev/stdin "${@:2}" < "$LIB_DIR"/switch
+}
+export -f _switch
+
+
+# _terraflakeConfig() {
+#   local path="$1"
+#   # shellcheck disable=SC2086
+#   nix 2>/dev/null eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json | jq -r "$path"
+# }
+# export -f _terraflakeConfig
+
+_tonixConfig() {
+  local path="$1"
+  # shellcheck disable=SC2086
+  # nix 2>/dev/null eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json | jq -r "$path"
+  [[ -f "./tonix.nix" ]] \
+    || { echo >&2 "Error: No config file (tonix.nix) found"; return 7; }
+  # _inputHook && nix-instantiate --eval-only --json -E "
+  # shellcheck disable=SC2086
+  nix-instantiate $NF_NIX_EVAL_OPTS --eval-only --json --strict -E "(import ./tonix.nix).config" \
+    | jq -er "$path"
+}
+export -f _tonixConfig
+
+_instance() {
+  # shellcheck disable=SC2119
+  _input | jq -r ".nodes.\"$1\" | .$2 // \"\""
+}
+export -f _instance
+
+_configs() {
+  _input | jq -r '.nodes | keys | .[]'
+}
+export -f _configs
+
+_confPath() {
+  local name="$1"
+  local provider
+  local path
+
+  _checkInstance "$name"
+  path="./$NF_DIR/module-$name.nix"
+
+  if [[ ! -f $path ]]; then
+    echo >&2 "Info: Not yet initialized"
+    _initInstance "$name" >/dev/null
+  fi
+  printf %s "$path"
+}
+export -f _confPath
+
+_remoteSystem() {
+  local ip="$1"
+  local system
+  # shellcheck disable=SC2016
+  system=$(_remote "$ip" sh -c 'true; echo "$(uname -m)-$(uname)"')
+  echo "${system,,}"
+}
+export -f _remoteSystem
+
+_output() {
+  local name="$1"
+  local expr="${*:2}"
+
+  # shellcheck disable=SC2086
+  nix-instantiate $NF_NIX_EVAL_OPTS --eval-only --json --strict -E "
+  let
+    tonix = import ${PROJ_ROOT}/tonix.nix;
+  in
+  ($expr) tonix.nixosConfigurations.$name.config
+  "
+  # nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#nixosConfigurations.$name.config" \
+  #   ${_OUTPUT_IMPURE+--impure} --json --apply "$expr"
+}
+export -f _output
+
+_caches() {
+  local name="$1"
+  # shellcheck disable=SC2016
+  _output "$name" '{ nix, ... }: with builtins; map (concatStringsSep " ") [
+    (nix.settings.substituters or nix.binaryCaches or [])
+    (nix.settings.trusted-public-keys or nix.binaryCachePublicKeys or [])
+  ]'
+}
+export -f _caches
+
+_secrets() {
+  local name="$1"
+  # shellcheck disable=SC2016
+  _output "$name" '{ terraflake, ... }: with builtins;
+    if terraflake?filesIn
+    then map (k: let i = terraflake.filesIn.${k}; in
+        [ i.path terraflake.filesOut.${k} i.chmod i.user i.group ]
+      ) (attrNames terraflake.filesIn)
+    else []
+  '
+}
+export -f _secrets
+
+_pushSecrets() {
+  local op name dry force ip file dir tmp rsec own cmd
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -d|--dry) dry=1;;
+    -f|--force) force=1;;
+    -*) true;;
+    *)
+      if [[ -z "$name" ]]; then name="$1"
+      # else { echo >&2 "Too many arguments given to build command"; return 13; }
+      fi
+      ;;
+  esac; shift; done
+
+  ip=$(_instance "$name" ip)
+  file=$(_secrets "$name" | jq -c '.[]')
+  dir=$(_output "$name" '{ terraflake, ... }: terraflake.filesDir' | jq -r .)
+  tmp=$(mktemp -d tmpsecret.XXXXX)
+  rsec=$(_remote "$ip" sh -c "true
+    mkdir -p \"$dir\"
+    chmod 755 \"$dir\"
+    find \"$dir\" -mindepth 1 -maxdepth 1
+  " </dev/null)
+
+  while read -r line && [ -n "$line" ]; do
+    mapfile -t l < <(jq -r '.[]' <<<"$line")
+    if [[ -z $force ]] && grep -q "^${l[1]}\$" <<<"$rsec"; then
+      rsec=$(sed "/$(basename "${l[1]}")\$/d" <<<"$rsec")
+    else
+      cp -r "${l[0]}" "$tmp/$(basename "${l[1]}")"
+      op=1
+    fi
+    own+="
+      chmod -R ${l[2]} ${l[1]}
+      find ${l[1]} -type d -exec chmod ug+x {} \\;
+      chown -R ${l[3]}:${l[4]} ${l[1]} 2>/dev/null || true
+    "
+  done <<<"$file"
+
+  if [[ -n $rsec ]]; then
+    op=1
+    if [[ -n $dry ]]; then
+      cmd+="
+        echo 'would remove: $rsec'
+      "
+    else
+      cmd+="
+        rm -rfv $(tr '\n' ' ' <<<"$rsec")
+      "
+    fi
+  fi
+
+  if [[ -n $own ]]; then
+    if [[ -n $dry ]]; then
+      cmd+="
+        tar tzv | sed 's/^/would extract: /'
+      "
+    else
+      cmd+="
+        tar xz -C \"$dir\"
+        $own
+      "
+    fi
+  fi
+
+  if [[ -n $cmd ]]; then
+    { tar czv -C "$tmp" -T <(cd "$tmp"; ls -1A) --mtime='1970-01-01 01:00:00' \
+      | _remote "$ip" sh -c "true;$cmd"
+    } 2>&1 | sed 's/^/Secret /' >&2
+  fi
+  if [[ -z $op ]]; then
+    echo >&2 "Secrets already in sync, doing nothing"
+  fi
+  rm -rf "$tmp"
+}
+export -f _pushSecrets
+
+_checkInstance() {
+  local name
+
+  name=$(_instance "$1")
+  [[ -n $name ]] || { echo >&2 "Error: No instance with name: $1"; return 1; }
+}
+export -f _checkInstance
+
+_checkInstances() {
+  local names
+
+  if [ -n "$*" ]
+    then names=("$@")
+    else mapfile -t names < <(_configs)
+  fi
+  for name in "${names[@]}"; do
+    _checkInstance "${name}"
+    echo "${name}"
+  done
+}
+export -f _checkInstances
+
+_checkUp() {
+  local name="$1"
+  local retries="${2:-3}"
+  local ip
+
+  ip=$(_instance "$name" ip)
+  echo >&2 "Checking SSH connection..."
+  for i in $(seq "$retries"); do
+    _remote "$ip" true </dev/null \
+      && return 0 || echo >&2 "Info: SSH connection failed, try $i/$retries"
+    sleep 5
+  done
+  echo >&2 "Error: Couldn't connect over SSH"
+  return 1
+}
+export -f _checkUp
+
+_initInstance() {
+  local name; name="$1"
+  local ip
+  local provider
+  local nixNetworking nixHardware
+  local confPath
+
+  _checkInstance "$name"
+
+  provider=$(_instance "$name" provider)
+
+  ip=$(_instance "$name" ip)
+
+  echo >&2 "Initializing config..."
+
+  # Aggregate instance config with custom configs
+  mkdir -p "$NF_DIR"
+
+  # Get instance specific config
+  confPath="$NF_DIR/module-$name.nix";
+  remoteSystem=$(_remoteSystem "$ip")
+
+  # Install Nix if not already installed
+  _switch "$ip" hasNix || {
+    _remote "$ip" sh <<EOF
+export PROVIDER="$provider"
+export NIX_CHANNEL=nixos-23.05
+export NO_REBOOT=1
+curl https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | sudo bash 2>&1 | sudo tee ./infect.log
+sudo ln -fs /root/.nix-profile/bin/nix-store /usr/bin/nix-store
+EOF
+  }
+
+  nixNetworking=$(_remote "$ip" cat /etc/nixos/networking.nix) || true
+  nixHardware=$(_remote "$ip" cat /etc/nixos/hardware-configuration.nix) || true
+
+  [[ -n "$nixHardware" ]] || {
+    echo >&2 "Error: Could not re-initialize instance make sure the server has configuration files /etc/nixos/networking.nix and /etc/nixos/hardware-configuration.nix"
+    exit 18
+  }
+
+  cat > "$confPath" <<EOF
+# DO NOT EDIT generated by 'terraflake init' (version: $(version))
+
+{ lib, modulesPath, pkgs, config, ... }: with builtins; let
+  node = config.terraflake.input.nodes."$name";
+  nodeConf'.modulesPath = modulesPath;
+  hashDir = dir:
+    mapAttrs (k: v: let p = "\${dir}/\${k}"; in
+      if v == "regular" then hashFile "sha1" p
+      else if v == "directory" then hashDir p
+      else "")
+    (readDir dir);
+  hash = path: let p = toString path; in
+    if (readDir (dirOf p))."\${baseNameOf p}" == "directory"
+    then hashString "sha1" (toJSON (hashDir p))
+    else hashFile "sha1" p;
+in {
+  imports = [
+    # Input data
+    ./.input.nix
+    # Secrets module
+    ({ lib, config, ... }: with lib; {
+      options.terraflake.system = mkOption {
+        description = "Remote system.";
+        type = types.str;
+      };
+      options.terraflake.input = mkOption {
+        description = "Data passed from provisioner.";
+        type = with types; submodule { options = {
+          meta = mkOption { type = attrs; };
+          nodes = mkOption { type = attrs; };
+          node = mkOption { type = attrs; };
+        }; };
+        default = { meta = {}; nodes = {}; node = {}; };
+      };
+      options.terraflake.filesIn = mkOption {
+        description = "Attrset of paths to local files, name -> local path.";
+        type = with types; attrsOf (submodule { options = {
+          path = mkOption { type = path; };
+          links = mkOption { type = listOf str; default = []; };
+          chmod = mkOption { type = strMatching "[0-7]+"; default = "0600"; };
+          user = mkOption { type = enum (attrNames config.users.users); default = "root"; };
+          group = mkOption { type = enum (attrNames config.users.groups); default = "root"; };
+        };});
+        default = {};
+      };
+      options.terraflake.filesDir = mkOption {
+        description = "Remote directory path to upload files to.";
+        type = types.str;
+        default = "/var/lib/nf-keys";
+      };
+      options.terraflake.filesOut = mkOption {
+        description = "Attrset of paths to remote files, name -> server path.";
+        type = with types; attrsOf str;
+        default = {};
+      };
+      config.terraflake.input.node = node;
+      config.terraflake.filesOut = mapAttrs (k: v: config.terraflake.filesDir+"/"+(hash v.path)) config.terraflake.filesIn;
+      config.system.activationScripts.nf-keys-permissons = concatMapStrings
+        (k: let
+          i = config.terraflake.filesIn."\${k}";
+          o = config.terraflake.filesOut."\${k}";
+        in ''
+          chown -R "\${i.user}:\${i.group}" "\${o}"
+          \${concatMapStringsSep "\\n" (ln: "ln -sfT '\${o}' '\${ln}'") i.links}
+        '')
+        (attrNames config.terraflake.filesIn);
+    })
+
+    # Hardware config gernerated by nixos-infect: $provider
+    ${nixNetworking:+($nixNetworking)}
+    ($nixHardware)
+    ({ ... }: { terraflake.system = "$remoteSystem"; })
+
+    # Node specific config
+    # nodeConf'.configuration
+  ];
+  networking.hostName = "$name";
+  services.openssh.enable = true;
+  users.users.root.openssh.authorizedKeys.keys = [node.ssh_key];
+  #system.activationScripts.nixos-cleanup = "rm -rf /old-root /boot.bak || true";
+}
+EOF
+  _git_add "$confPath"
+  echo "$name" "$confPath"
+}
+export -f _initInstance
+
+_buildInstance() {
+  local ecode=0
+  local name="$1"
+
+  # Make sure config is instantiated
+  _confPath "$name" >/dev/null
+
+  echo >&2 "Building config..."
+
+  # shellcheck disable=SC2086
+  # nix-build --no-out-link $NF_NIX_BUILD_OPTS -E "
+  # shellcheck disable=SC2086
+  nix-instantiate $NF_NIX_BUILD_OPTS -E "
+  let
+    tonix = import ${PROJ_ROOT}/tonix.nix;
+  in
+  tonix.nixosConfigurations.$name.config.system.build.toplevel
+  " \
+  2> >(grep >&2 -v "^warning: you did not specify '--add-root'; the result might be removed by the garbage collector")
+
+  # nix derivation show $NF_NIX_BUILD_OPTS \
+  #   "$NF_FLAKE#nixosConfigurations.$name.config.system.build.toplevel" \
+  #   | jq -r 'keys|.[0]'
+}
+export -f _buildInstance
+
+_pushInstance() {
+  local localRealize
+  local autoReboot
+  local op; op="switch"
+  local name
+  local ip
+  local provider
+  local path
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -l|--local) localRealize=1;;
+    -b|--bundle) bundleDerivations=1;;
+    -d|--dry) op="dry-activate";;
+    -r|--auto-reboot) autoReboot=1;;
+    -*) true;; #echo >&2 "Not a recognized push option '$1'"; return 13;;
+    *)
+      if [ -z "$name" ]; then name="$1"
+      elif [ -z "$path" ]; then path="$1"
+      fi
+      ;;
+  esac; shift; done
+
+  _checkInstance "$name"
+  ip=$(_instance "$name" ip)
+
+  [[ -e "$path" ]] || { echo >&2 "Error: Not a valid config closure: $path"; return 5; }
+
+  _switch "$ip" hasNix || {
+    echo >&2 "Instance needs to be initialized first, no NixOS detected"
+    exit 17
+  }
+  echo >&2 "Pushing config ($op)..."
+
+  mapfile -t caches < <(_caches "$name" | jq -r '.[]')
+  mapfile -t opts <<<"$SSH_OPTS"
+
+  # Push config closure to instance
+  if [[ -n $localRealize ]]; then
+    echo >&2 "Realizing NixOS config on local host"
+    path=$(
+      nix-store -r "$path" \
+        --option substituters "${caches[0]}" \
+        --option trusted-public-keys "${caches[1]}"
+    ) || { echo >&2 "Error: Failed to realize derivation locally: $path"; return 11; }
+    echo >&2 "Copying NixOS closure to remote host"
+    NIX_SSHOPTS="${opts[*]}" \
+      nix-copy-closure -s --to "$NF_SSH_USER@$ip" "$path" \
+      || { echo >&2 "Error: Failed to copy closure to node: $path"; return 11; }
+  else
+    if [[ -n $bundleDerivations ]]; then
+      echo >&2 "Copying NixOS bundled config derivations to remote host"
+      # shellcheck disable=SC2046
+      nix-store --export $(nix-store -qR "$path") \
+        | stdbuf -oL gzip \
+        | _remote "$ip" sh -c "gunzip | nix-store --import"
+    else
+      echo >&2 "Copying NixOS config derivation to remote host"
+      NIX_SSHOPTS="${opts[*]}" \
+        nix-copy-closure -s --to "$NF_SSH_USER@$ip" "$path" \
+        || { echo >&2 "Error: Failed to copy derivation closure to node: $path"; return 14; }
+    fi
+    echo >&2 "Realizing NixOS config on remote host"
+    path=$(_remote "$ip" sh -l <<EOF
+      set -x
+      nix-store -r "$path" \
+        --option substituters '${caches[0]}' \
+        --option trusted-public-keys '${caches[1]}'
+EOF
+    ) || { echo >&2 "Error: Failed to realize derivation on node: $path"; return 14; }
+  fi
+
+  # Install config and infect instance with NixOS if not already
+  _switch "$ip" switch "$op" "$path" || {
+    case "$?" in
+      200)
+        echo >&2 "Instance needs to be initialized first, no NixOS detected"
+        exit 17
+        ;;
+      100)
+        echo >&2 "Instance needs to reboot to finish configuration"
+        if [[ "$autoReboot" ]]; then
+          echo >&2 "Rebooting..."
+          _remote "$ip" reboot </dev/null || true
+          _checkUp "$name" 5 || {
+            echo >&2 "Couldn't reach instance after reboot"
+            exit 101
+          }
+          _switch "$ip" switch "$op" "$path" || {
+            case "$?" in
+              4) echo >&2 "Warning: Couldn't start all services";;
+              *) return 8;;
+            esac
+          }
+        else
+          echo >&2 "Refusing to reboot because of option --no-reboot, reboot instance manually"
+          exit 100
+        fi
+        ;;
+      4)
+        echo >&2 "Warning: Couldn't start all services"
+        ;;
+      *)
+        return 8
+        ;;
+    esac
+  }
+  echo >&2 "Push successful!"
+}
+export -f _pushInstance
+
+_pushAll() {
+  local flags
+  local name
+  local path
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
+    *)
+      if [[ -z "$name" ]]; then name="$1"
+      elif [[ -z "$path" ]]; then path="$1"
+      fi;;
+  esac; shift; done
+
+  _pushSecrets "$name" "${flags[@]}" \
+    2> >(_ilog "$name")
+  _pushInstance "$name" "$path" "${flags[@]}" \
+    2> >(_ilog "$name")
+}
+export -f _pushAll
+
+# CLI commands
+
+_initSetup() {
+  local input_file instances input_file_name
+
+  if input_file_name=$(_tonixConfig ".provisioner"); then :; else
+    input_file_name="opentofu-local"
+  fi
+
+  input_file=$(_searchPath "$NF_PROVISIONER_PATH" "${input_file_name}.nix") || {
+    echo >&2 "Error: '$input_file_name' is not a valid provisioner."
+    exit 17
+  }
+
+  mkdir -p "$NF_DIR"
+  cp --no-preserve=all "$input_file" "$NF_INPUT_DEST"
+
+  # _git_add "$NF_INPUT_DEST"
+  # if [[ "$input_file_name" = "terraform-local" ]] \
+  # || [[ "$input_file_name" = "opentofu-local" ]]
+  # then
+  #   _git_add "terraform.tfstate"
+  # fi
+
+  cat > "$NF_DIR/default.nix" <<EOF
+# DO NOT EDIT generated by 'tonix init' (version: $(version))
+
+rec {
+  module = name: import "\${../.}/$NF_DIR/module-\${name}.nix";
+  __functor = self: module;
+}
+EOF
+  # _git_add "$NF_DIR/default.nix"
+}
+
+_init() {
+  instances=$(_checkInstances "$@")
+
+  check "$@"
+  # shellcheck disable=SC2016
+  _par '_initInstance "$1" 2> >(_ilog "$1")' <<<"$instances"
+}
+
+init() {
+  _initSetup
+  _init "$@"
+}
+
+_input() {
+  local path; path="$1"
+  local expr; expr="
+  let
+    inherit (import ${PROJ_ROOT}/tonix.nix) pkgs;
+    config = import ${PROJ_ROOT}/$NF_INPUT_DEST { inherit pkgs; };
+  in
+  config.terraflake.input
+  "
+
+  # FIXME: don't use git root if in git repo
+  # shellcheck disable=SC2086
+  nix-instantiate $NF_NIX_EVAL_OPTS -E "$expr"
+  # shellcheck disable=SC2086
+  nix-instantiate $NF_NIX_EVAL_OPTS --eval-only --json --strict -E "$expr" \
+    | jq -rM ".${path#.} // \"\""
+
+  # nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.pkgs" --json --apply "
+  #   with builtins;
+  #   pkgs: let
+  #     config = import $(_flake_source)/$NF_INPUT_DEST { inherit pkgs; };
+  #   in
+  #   config.terraflake.input
+  # " \
+  # | jq -rM ".${1#.} // \"\""
+}
+export -f _input
+
+# shellcheck disable=SC2120
+input() {
+  if [[ ! -d "$NF_DIR" ]]; then
+    _initSetup
+  fi
+
+  _input "$@"
+}
+
+output() {
+  local name; name="$1"
+  local exprs; exprs=("${@:2}")
+
+  [[ -n "$name" ]] \
+    || _usage "Missing instance name as first argument"
+  [[ -n "${exprs[*]}" ]] \
+    || _usage "Missing Nix expression as second argument"
+
+  _OUTPUT_IMPURE=1 _output "$name" "
+    { ... }@config: with config;
+    let
+      pkgs = import <nixpkgs> {};
+      result = (${exprs[*]});
+    in
+      if (builtins.isAttrs result)
+      then
+        pkgs.lib.filterAttrsRecursive
+          (_: v: !(builtins.isFunction v))
+          result
+      else
+        result
+  " 2> >(_ilog "$1") \
+    | jq -rM .
+}
+export -f output
+
+check() {
+  local instances
+  local ecode; ecode=0
+
+  instances=$(_checkInstances "$@")
+  # shellcheck disable=SC2016
+  _par '_checkUp "$1" 2> >(_ilog "$1")' <<<"$instances" \
+    || { ecode=$?; echo >&2 "Error: Couldn't reach all instance"; return $ecode; }
+}
+
+build() {
+  local path instances names flags
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
+    *) names+=("$1");;
+  esac; shift; done
+
+  if [[ ! -d "$NF_DIR" ]]; then _initSetup; fi
+
+  instances=$(_checkInstances "${names[@]}")
+
+  # shellcheck disable=SC2016
+  _par '
+    { path=$(_buildInstance "$@") || {
+        echo >&2 "Error: Failed to build config"; exit 4
+      }
+    } 2> >(_ilog "$1")
+    echo "$1" "$path"
+  ' "${flags[@]}" <<<"$instances" \
+    || { ecode=$?;echo >&2 "Error: Couldn't build all instances"; return $ecode; }
+}
+
+push() {
+  local name
+  local path
+  local buildOutput
+  local names
+  local flags
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
+    *) names+=("$1");;
+  esac; shift; done
+
+  buildOutput=$(build "${names[@]}")
+  check "${names[@]}"
+  # shellcheck disable=SC2016
+  _par '_pushAll "$@"' "${flags[@]}" <<<"$buildOutput"
+  check "${names[@]}"
+}
+
+diff() {
+  local name path rpath lpath buildOutput names ip caches
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) echo >&2 "Not a recognized diff option: $1"; return 13;;
+    *) names+=("$1");;
+  esac; shift; done
+
+  mapfile -t opts <<<"$SSH_OPTS"
+
+  buildOutput=$(build "${names[@]}")
+  while read -r name path; do
+    mapfile -t caches < <(_caches "$name" | jq -r '.[]')
+    lpath=$(
+      # Then new way?
+      # nix build --print-out-paths -L "$path^out" \
+      nix-store -r "$path" \
+      --option substituters "${caches[0]}" \
+      --option trusted-public-keys "${caches[1]}"
+    )
+    ip=$(_instance "$name" ip)
+    rpath=$(_remote "$ip" nix-store -q /nix/var/nix/profiles/system </dev/null)
+
+    NIX_SSHOPTS="${opts[*]}" \
+      nix-copy-closure -s --from "$NF_SSH_USER@$ip" "$rpath" \
+
+    nix-diff "$rpath" "$lpath" \
+      2> >(_ilog "$name")
+  done <<<"$buildOutput"
+}
+
+secret() {
+  local flags
+  local names
+  local instances
+
+  while [[ -n "$1" ]]; do case "$1" in
+    -*) flags+=("$1");;
+    *) names+=("$1");;
+  esac; shift; done
+
+  instances=$(_checkInstances "${names[@]}")
+
+  # shellcheck disable=SC2016
+  _par '_pushSecrets "$@" 2> >(_ilog "${@:$#}")' "${flags[@]}" <<<"$instances"
+}
+
+nodes() {
+  _configs
+}
+
+ssh() {
+  local name="$1"
+
+  [[ -n "$name" ]] \
+    || _usage "Missing instance name"
+
+  $SSH_EXEC "$NF_SSH_USER@$(_input | jq -r ".nodes.\"$name\".ip")" "${@:2}"
+}
+
+# trap 'ecode=$?;trap - EXIT
+#   if [[ $ecode == 0 ]]; then
+#     echo >&2 "Success!"
+#   else
+#     echo >&2 "Failed($ecode)!"
+#   fi
+# ' EXIT
+trap 'trap - TERM; kill $$' TERM
+
+cmd=${1:-help}
+declare -F | cut -d' ' -f3 | grep -q "^${cmd#_}$" \
+  || _usage "No command named '$cmd'"
+
+
+# shellcheck disable=SC2031
+if [[ $NF_DEBUG ]]; then set -x; fi
+
+PROJ_ROOT=$(_git_root)
+PROJ_ROOT="${PROJ_ROOT:-$PWD}"
+export PROJ_ROOT
+
+( cd "$PROJ_ROOT"
+  "${cmd#_}" "${@:2}"
+)
