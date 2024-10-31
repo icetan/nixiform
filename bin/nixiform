@@ -42,7 +42,7 @@ export NF_CONFIGURATOR_PATH
 NF_PAR="${NF_PAR-1}"
 export NF_PAR
 
-version() { tr -d '\n' < "$LIB_DIR"/version; }
+version() { tr -d '\n' < "$LIB_DIR"/nixiform-version; }
 
 help() {
   cat >&2 <<EOF
