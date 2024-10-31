@@ -8,15 +8,17 @@
       (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          packages = import ./. { inherit pkgs; };
         in
         {
-          packages.nixiform = import ./. { inherit pkgs; };
-          packages.default = self.outputs.packages.${system}.nixiform;
-          packages.terraflake = self.outputs.packages.${system}.nixiform;
+          packages = packages // {
+            default = self.outputs.packages.${system}.nixiform;
+          };
           devShells.default = self.outputs.packages.${system}.nixiform;
           apps.nixiform = { type = "app"; program = "nixiform"; };
           apps.default = self.outputs.apps.${system}.nixiform;
           apps.terraflake = { type = "app"; program = "terraflake"; };
+          apps.tonix = { type = "app"; program = "tonix"; };
         }
       );
 }

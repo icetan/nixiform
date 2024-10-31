@@ -1,11 +1,11 @@
 let
-  nixiform = {
+  mkBin = binName: {
     stdenv, makeWrapper, lib, shellcheck,
     glibcLocales, coreutils, gzip, gnused, gnugrep, gnutar, openssh, git, jq,
     nix, nix-diff
   }: stdenv.mkDerivation rec {
-    name = "nixiform-${version}";
-    version = lib.fileContents ./lib/version;
+    name = "${binName}-${version}";
+    version = lib.fileContents "${./lib}/${binName}-version";
     src = lib.sourceByRegex ./. [
       "bin" "bin/.*"
       "lib" "lib/.*"
@@ -22,9 +22,9 @@ let
         "--set LOCALE_ARCHIVE \"${glibcLocales}\"/lib/locale/locale-archive";
     in ''
       mkdir -p $out/{bin,lib}
-      cp -r -t $out/bin ./bin/*
+      cp ./bin/${binName} $out/bin
       cp -r -t $out/lib ./lib/*
-      wrapProgram "$out/bin/nixiform" --argv0 nixiform --prefix PATH : "${path}" ${locales}
+      wrapProgram "$out/bin/${binName}" --argv0 ${binName} --prefix PATH : "${path}" ${locales}
     '';
 
     doCheck = true;
@@ -39,4 +39,8 @@ let
       inherit version;
     };
   };
-in { pkgs ? import <nixpkgs> {} }: pkgs.callPackage nixiform {}
+in { pkgs ? import <nixpkgs> {} }: {
+  nixiform = pkgs.callPackage (mkBin "nixiform") {};
+  terraflake = pkgs.callPackage (mkBin "terraflake") {};
+  tonix = pkgs.callPackage (mkBin "tonix") {};
+}
