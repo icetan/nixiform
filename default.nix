@@ -39,7 +39,10 @@ let
       inherit version;
     };
   };
-in { pkgs ? import <nixpkgs> {} }: {
+in
+{ system ? builtins.currentSystem
+, pkgs ? import (import ./shim.nix).inputs.nixpkgs { inherit system; }
+}: {
   nixiform = pkgs.callPackage (mkBin "nixiform") {};
   terraflake = pkgs.callPackage (mkBin "terraflake") {};
   tonix = pkgs.callPackage (mkBin "tonix") {};
