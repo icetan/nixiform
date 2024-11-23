@@ -2,10 +2,14 @@
 
 { ... }:
 let
-  attrsToList = attrs: builtins.map
-    (name: { inherit name; value = attrs.${name}; })
-    (builtins.attrNames attrs);
-  filterAttrs = fn: attrs:
+  attrsToList =
+    attrs:
+    builtins.map (name: {
+      inherit name;
+      value = attrs.${name};
+    }) (builtins.attrNames attrs);
+  filterAttrs =
+    fn: attrs:
     let
       list = attrsToList attrs;
       list' = builtins.filter ({ name, value }: fn name value) list;
@@ -17,13 +21,16 @@ let
   isNodeOutput = name: name == "terraflake" || name == "nixiform";
   meta = filterAttrs (name: _: !(isNodeOutput name)) outputs;
   nodes' = filterAttrs (name: _: isNodeOutput name) outputs;
-  nodes = builtins.listToAttrs
-    (builtins.map
-      (node: { name = node.name; value = node; })
-      (nodes'.terraflake or nodes'.nixiform));
+  nodes = builtins.listToAttrs (
+    builtins.map (node: {
+      name = node.name;
+      value = node;
+    }) (nodes'.terraflake or nodes'.nixiform)
+  );
+  input = { inherit meta nodes; };
 in
 {
-  terraflake.input = {
-    inherit meta nodes;
-  };
+  nixiform.input = input;
+  terraflake.input = input;
+  tonix.input = input;
 }

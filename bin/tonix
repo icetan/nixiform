@@ -431,41 +431,47 @@ in {
     # Input data
     ./.input.nix
     # Secrets module
-    ({ lib, config, ... }: with lib; {
-      options.tonix.system = mkOption {
-        description = "Remote system.";
-        type = types.str;
+    ({ lib, config, ... }: with lib; let
+      tonixOpts = {
+        system = mkOption {
+          description = "Remote system.";
+          type = types.str;
+        };
+        input = mkOption {
+          description = "Data passed from provisioner.";
+          type = with types; submodule { options = {
+            meta = mkOption { type = attrs; };
+            nodes = mkOption { type = attrs; };
+            node = mkOption { type = attrs; };
+          }; };
+          default = { meta = {}; nodes = {}; node = {}; };
+        };
+        filesIn = mkOption {
+          description = "Attrset of paths to local files, name -> local path.";
+          type = with types; attrsOf (submodule { options = {
+            path = mkOption { type = path; };
+            links = mkOption { type = listOf str; default = []; };
+            chmod = mkOption { type = strMatching "[0-7]+"; default = "0600"; };
+            user = mkOption { type = enum (attrNames config.users.users); default = "root"; };
+            group = mkOption { type = enum (attrNames config.users.groups); default = "root"; };
+          };});
+          default = {};
+        };
+        filesDir = mkOption {
+          description = "Remote directory path to upload files to.";
+          type = types.str;
+          default = "/var/lib/nf-keys";
+        };
+        filesOut = mkOption {
+          description = "Attrset of paths to remote files, name -> server path.";
+          type = with types; attrsOf str;
+          default = {};
+        };
       };
-      options.tonix.input = mkOption {
-        description = "Data passed from provisioner.";
-        type = with types; submodule { options = {
-          meta = mkOption { type = attrs; };
-          nodes = mkOption { type = attrs; };
-          node = mkOption { type = attrs; };
-        }; };
-        default = { meta = {}; nodes = {}; node = {}; };
-      };
-      options.tonix.filesIn = mkOption {
-        description = "Attrset of paths to local files, name -> local path.";
-        type = with types; attrsOf (submodule { options = {
-          path = mkOption { type = path; };
-          links = mkOption { type = listOf str; default = []; };
-          chmod = mkOption { type = strMatching "[0-7]+"; default = "0600"; };
-          user = mkOption { type = enum (attrNames config.users.users); default = "root"; };
-          group = mkOption { type = enum (attrNames config.users.groups); default = "root"; };
-        };});
-        default = {};
-      };
-      options.tonix.filesDir = mkOption {
-        description = "Remote directory path to upload files to.";
-        type = types.str;
-        default = "/var/lib/nf-keys";
-      };
-      options.tonix.filesOut = mkOption {
-        description = "Attrset of paths to remote files, name -> server path.";
-        type = with types; attrsOf str;
-        default = {};
-      };
+    in {
+      options.tonix = tonixOpts;
+      options.terraflake = tonixOpts;
+      options.nixiform = tonixOpts;
       config.tonix.input.node = node;
       config.tonix.filesOut = mapAttrs (k: v: config.tonix.filesDir+"/"+(hash v.path)) config.tonix.filesIn;
       config.system.activationScripts.nf-keys-permissons = concatMapStrings
