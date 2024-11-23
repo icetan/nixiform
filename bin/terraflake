@@ -157,7 +157,7 @@ export -f _switch
 _terraflakeConfig() {
   local path="$1"
   # shellcheck disable=SC2086
-  nix 2>/dev/null eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json | jq -r "$path"
+  nix 2>/dev/null eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json | jq -er "$path"
 }
 export -f _terraflakeConfig
 
@@ -625,7 +625,9 @@ export -f _pushAll
 _initSetup() {
   local input_file instances input_file_name
 
-  input_file_name=$(_terraflakeConfig ".provisioner" || echo "opentofu-local")
+  if input_file_name=$(_terraflakeConfig ".provisioner"); then :; else
+    input_file_name="opentofu-local"
+  fi
 
   input_file=$(_searchPath "$NF_PROVISIONER_PATH" "${input_file_name}.nix") || {
     echo >&2 "Error: '$input_file_name' is not a valid provisioner."

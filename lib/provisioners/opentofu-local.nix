@@ -23,8 +23,10 @@ let
       }
       '
     '';
-
+  input = pkgs.lib.importJSON drv;
 in
 {
-  terraflake.input = pkgs.lib.importJSON drv;
+  nixiform.input = input;
+  terraflake.input = input;
+  tonix.input = input;
 }
