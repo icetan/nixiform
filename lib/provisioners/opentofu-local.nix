@@ -2,7 +2,8 @@
 
 { pkgs, ... }:
 let
-  inherit (pkgs) opentofu jq runCommand;
+  pkgs' = import pkgs.path { system = builtins.currentSystem; };
+  inherit (pkgs') opentofu jq runCommand;
   drv = runCommand "terraflake-opentofu-local-output"
     {
       buildInputs = [ opentofu jq ];
@@ -23,7 +24,7 @@ let
       }
       '
     '';
-  input = pkgs.lib.importJSON drv;
+  input = pkgs'.lib.importJSON drv;
 in
 {
   nixiform.input = input;

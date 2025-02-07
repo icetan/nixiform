@@ -2,7 +2,8 @@
 
 { pkgs, ... }:
 let
-  inherit (pkgs) terraform jq runCommand;
+  pkgs' = import pkgs.path { system = builtins.currentSystem; };
+  inherit (pkgs') terraform jq runCommand;
   drv = runCommand "terraflake-terraform-local-output"
     {
       buildInputs = [ terraform jq ];
@@ -23,7 +24,7 @@ let
       }
       '
     '';
-  input = pkgs.lib.importJSON drv;
+  input = pkgs'.lib.importJSON drv;
 in
 {
   nixiform.input = input;
