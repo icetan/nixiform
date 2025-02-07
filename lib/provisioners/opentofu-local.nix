@@ -27,9 +27,7 @@ let
       value = node;
     }) (nodes'.terraflake or nodes'.nixiform)
   );
-
   input = { inherit meta nodes; };
-
 in
 {
   terraflake.input = input;
