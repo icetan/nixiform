@@ -114,7 +114,9 @@ _par() {
 export -f _par
 
 _flake_source() {
-  nix 2>/dev/null flake metadata --json | jq -r .path
+  local path
+  path=$(nix 2>/dev/null flake metadata --json | jq -r '.path // ""')
+  echo "${path:-.}"
 }
 export -f _flake_source
 
@@ -484,7 +486,7 @@ _buildInstance() {
   echo >&2 "Building config..."
 
   # shellcheck disable=SC2086
-  nix derivation show $NF_NIX_BUILD_OPTS \
+  nix derivation show --impure $NF_NIX_BUILD_OPTS \
     "$NF_FLAKE#nixosConfigurations.$name.config.system.build.toplevel" \
     | jq -r 'keys|.[0]'
 }
@@ -668,7 +670,7 @@ init() {
 
 _input() {
   # shellcheck disable=SC2086
-  nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.pkgs" --json --apply "
+  nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.pkgs" --impure --json --apply "
     with builtins;
     pkgs: let
       config = import $(_flake_source)/$NF_INPUT_DEST { inherit pkgs; };
