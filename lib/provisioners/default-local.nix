@@ -25,5 +25,7 @@ let
   input = { inherit meta nodes; };
 in
 {
+  nixiform.input = input;
   terraflake.input = input;
+  tonix.input = input;
 }
