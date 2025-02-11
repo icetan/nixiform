@@ -43,9 +43,6 @@ NF_INPUT_DEST="$NF_DIR/.input.nix"
 export NF_INPUT_DEST
 NF_FLAKE="${NF_FLAKE:-.}"
 export NF_FLAKE
-NF_SYSTEM="${NF_SYSTEM:-$(nix eval --impure --raw --expr 'builtins.currentSystem')}"
-NF_SYSTEM="${NF_SYSTEM,,}"
-export NF_SYSTEM
 NF_PROVISIONER_PATH="${NF_PROVISIONER_PATH-$NF_DIR/provisioners:$LIB_DIR/provisioners}"
 export NF_PROVISIONER_PATH
 NF_PAR="${NF_PAR-1}"
@@ -114,7 +111,7 @@ _par() {
 export -f _par
 
 _flake_source() {
-  nix 2>/dev/null flake metadata --json | jq -r '.path // "."'
+  nix 2>/dev/null flake metadata --json | jq -r '.path // "'"$PROJ_ROOT"'"'
 }
 export -f _flake_source
 
@@ -157,7 +154,7 @@ export -f _switch
 _terraflakeConfig() {
   local path="$1"
   # shellcheck disable=SC2086
-  nix 2>/dev/null eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.config" --json | jq -r "$path"
+  nix 2>/dev/null eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake" --json | jq -r "$path"
 }
 export -f _terraflakeConfig
 
@@ -383,6 +380,9 @@ EOF
 
   [[ -n "$nixHardware" ]] || {
     echo >&2 "Error: Could not re-initialize instance make sure the server has configuration files /etc/nixos/networking.nix and /etc/nixos/hardware-configuration.nix"
+    echo >&2
+    echo >&2 "Hint: Try generating missing files with: \`terraflake ssh $name nixos-generate-config\`"
+    echo >&2
     exit 18
   }
 
@@ -625,7 +625,7 @@ export -f _pushAll
 _initSetup() {
   local input_file instances input_file_name
 
-  input_file_name=$(_terraflakeConfig ".provisioner" || echo "opentofu-local")
+  input_file_name=$(_terraflakeConfig ".provisioner" || echo "default-local")
 
   input_file=$(_searchPath "$NF_PROVISIONER_PATH" "${input_file_name}.nix") || {
     echo >&2 "Error: '$input_file_name' is not a valid provisioner."
