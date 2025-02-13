@@ -407,6 +407,9 @@ EOF
 
   [[ -n "$nixHardware" ]] || {
     echo >&2 "Error: Could not re-initialize instance make sure the server has configuration files /etc/nixos/networking.nix and /etc/nixos/hardware-configuration.nix"
+    echo >&2
+    echo >&2 "Hint: Try generating missing files with: \`terraflake ssh $name nixos-generate-config\`"
+    echo >&2
     exit 18
   }
 
@@ -429,7 +432,7 @@ EOF
 in {
   imports = [
     # Input data
-    ./.input.nix
+    ({ ... }: { tonix.input = (import ./.input.nix {}).tonix.input; })
     # Secrets module
     ({ lib, config, ... }: with lib; let
       tonixOpts = {
@@ -470,8 +473,6 @@ in {
       };
     in {
       options.tonix = tonixOpts;
-      options.terraflake = tonixOpts;
-      options.nixiform = tonixOpts;
       config.tonix.input.node = node;
       config.tonix.filesOut = mapAttrs (k: v: config.tonix.filesDir+"/"+(hash v.path)) config.tonix.filesIn;
       config.system.activationScripts.nf-keys-permissons = concatMapStrings
@@ -667,7 +668,7 @@ _initSetup() {
   local input_file instances input_file_name
 
   if input_file_name=$(_tonixConfig ".provisioner"); then :; else
-    input_file_name="opentofu-local"
+    input_file_name="tonix-default-local"
   fi
 
   input_file=$(_searchPath "$NF_PROVISIONER_PATH" "${input_file_name}.nix") || {
@@ -711,31 +712,12 @@ init() {
 
 _input() {
   local path; path="$1"
-  local expr; expr="
-  let
-    tonixfn = import ${PROJ_ROOT}/tonix.nix;
-    tonixconf = if builtins.isFunction tonixfn then (tonixfn {}) else tonixfn;
-    inherit (tonixconf) pkgs;
-    config = import ${PROJ_ROOT}/$NF_INPUT_DEST { inherit pkgs; };
-  in
-  config.tonix.input
-  "
+  local expr; expr="(import ${PROJ_ROOT}/$NF_INPUT_DEST {}).tonix.input"
 
   # FIXME: don't use git root if in git repo
   # shellcheck disable=SC2086
-  nix-instantiate $NF_NIX_EVAL_OPTS -E "$expr"
-  # shellcheck disable=SC2086
   nix-instantiate $NF_NIX_EVAL_OPTS --eval-only --json --strict -E "$expr" \
     | jq -rM ".${path#.} // \"\""
-
-  # nix eval $NF_NIX_EVAL_OPTS "$NF_FLAKE#terraflake.$NF_SYSTEM.pkgs" --json --apply "
-  #   with builtins;
-  #   pkgs: let
-  #     config = import $(_flake_source)/$NF_INPUT_DEST { inherit pkgs; };
-  #   in
-  #   config.terraflake.input
-  # " \
-  # | jq -rM ".${1#.} // \"\""
 }
 export -f _input
 
