@@ -373,7 +373,7 @@ _initInstance() {
 export PROVIDER="$provider"
 export NIX_CHANNEL=nixos-23.05
 export NO_REBOOT=1
-curl https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | sudo bash 2>&1 | sudo tee ./infect.log
+curl https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | sudo -E bash 2>&1 | sudo tee ./infect.log
 sudo ln -fs /root/.nix-profile/bin/nix-store /usr/bin/nix-store
 EOF
   }
