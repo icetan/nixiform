@@ -20,8 +20,33 @@ infect() {
   echo etc/resolv.conf            >> /etc/NIXOS_LUSTRATE
   echo root/.nix-defexpr/channels >> /etc/NIXOS_LUSTRATE
 
-  rm -rf /boot.bak
-  mv -v /boot /boot.bak
+  efivar=$(ls /sys/firmware/efi/efivars/LoaderDevicePartUUID* 2>/dev/null)
+  efipart=""
+  if [ -n "$efivar" ]; then
+    # read efi var using only "standard" utilities. first four bytes are attributes,
+    # followed by a utf-16 null-terminated string
+    efipart=$(dd if="$efivar" bs=1 skip=4 2>/dev/null | iconv -f utf16 | xargs -l -0)
+  fi
+  echo "efivar = $efivar" >&2
+  echo "efipart = $efipart" >&2
+  if findmnt /boot >/dev/null; then
+    cp -vr /boot /boot.bak
+    if findmnt /boot/efi >/dev/null; then
+      [ -z "$efipart" ] && efipart=$(findmnt -n /boot/efi -o partuuid)
+      echo "efipart = $efipart" >&2
+      umount /boot/efi
+    fi
+    umount /boot
+  else
+    mv -v /boot /boot.bak
+  fi
+
+  if [ -n "$efipart" ]; then
+    mkdir -p /boot
+    mount "/dev/disk/by-partuuid/$efipart" /boot
+  fi
+
+  ln -s "$(readlink -f /nix/var/nix/profiles/system)" /run/current-system
 
   /nix/var/nix/profiles/system/bin/switch-to-configuration boot
 }
