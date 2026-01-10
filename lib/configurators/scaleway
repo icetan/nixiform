@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+# Taken from nixos-infect
+# More info at: https://github.com/elitak/nixos-infect
+
+makeConfiguration() {
+
+  findmnt -n / -o partuuid >&2
+  rootfs=$(findmnt -n / -o partuuid)
+
+  cat << EOF
+{ ... }: {
+  imports = [
+    "\${nodeConf'.modulesPath}/profiles/qemu-guest.nix"
+  ];
+    fileSystems."/" = {
+      device = "/dev/disk/by-partuuid/${rootfs}";
+      autoResize = true;
+      fsType = "ext4";
+    };
+
+    fileSystems."/boot" = {
+      device = "/dev/disk/by-label/UEFI";
+      fsType = "vfat";
+    };
+
+    boot.growPartition = true;
+    boot.kernelParams = map (c: "console=\${c}") [ "ttyS0" ];
+    boot.loader.grub.device = "nodev";
+
+    boot.loader.grub.efiSupport = true;
+    boot.loader.grub.efiInstallAsRemovable = true;
+    boot.loader.timeout = 0;
+}
+EOF
+}
+
+makeConfiguration
