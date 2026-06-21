@@ -368,7 +368,7 @@ _initInstance() {
   _switch "$ip" hasNix || {
     _remote "$ip" sh <<EOF
 export PROVIDER="$provider"
-export NIX_CHANNEL=${NIX_CHANNEL:-"nixos-26.05"}
+export NIX_CHANNEL=${NIX_CHANNEL:-"nixos-25.11"}
 export NO_REBOOT=1
 curl https://raw.githubusercontent.com/linusfri/nixos-infect/master/nixos-infect | sudo -E bash 2>&1 | sudo tee ./infect.log
 sudo ln -fs /root/.nix-profile/bin/nix-store /usr/bin/nix-store
