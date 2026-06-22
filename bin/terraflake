@@ -368,9 +368,9 @@ _initInstance() {
   _switch "$ip" hasNix || {
     _remote "$ip" sh <<EOF
 export PROVIDER="$provider"
-export NIX_CHANNEL=nixos-23.05
+export NIX_CHANNEL=${NIX_CHANNEL:-"nixos-25.11"}
 export NO_REBOOT=1
-curl https://raw.githubusercontent.com/elitak/nixos-infect/master/nixos-infect | sudo -E bash 2>&1 | sudo tee ./infect.log
+curl https://raw.githubusercontent.com/linusfri/nixos-infect/master/nixos-infect | sudo -E bash 2>&1 | sudo tee ./infect.log
 sudo ln -fs /root/.nix-profile/bin/nix-store /usr/bin/nix-store
 EOF
   }
@@ -477,16 +477,25 @@ export -f _initInstance
 _buildInstance() {
   local ecode=0
   local name="$1"
+  local drv_path
 
   # Make sure config is instantiated
   _confPath "$name" >/dev/null
 
   echo >&2 "Building config..."
 
+  # In nix versions > 2.34.x, the output of nix derivation show seems to have changed, and the derivation path is no longer directly available as a top level key.
+  # This aims to be compatible with both the old and new output formats, as long as the interface doesn't break again. 
   # shellcheck disable=SC2086
-  nix derivation show $NF_NIX_BUILD_OPTS \
+  drv_path=$(nix derivation show $NF_NIX_BUILD_OPTS \
     "$NF_FLAKE#nixosConfigurations.$name.config.system.build.toplevel" \
-    | jq -r 'keys|.[0]'
+    | jq -r 'if has("derivations") then .derivations | keys[0] | "/nix/store/" + . else keys[0] end')
+
+  if [[ "$drv_path" != /nix/store/* ]]; then
+    echo >&2 "Warning: Could not determine a valid store path from derivation output: $drv_path"
+  fi
+
+  echo "$drv_path"
 }
 export -f _buildInstance
 
